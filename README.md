@@ -19,5 +19,24 @@ actor dog launcher = do
     PetTheDog -> send Pets dog
 ```
 
-In the example folder, Main.hs contains an example of a supervisor written in
-our model.
+In the above case, if we want to send an address to someone which doesn't allow
+them to send any missiles, we can achieve this with the following:
+
+```haskell
+data JustPets = JustPets
+
+instance JustPets :-> Message where
+  convert JustPets = PetTheDog
+
+actor :: Address (Address JustPets) -> ActionT Message IO ()
+actor addr = do
+  pettingAddress <- myAddress
+  send pettingAddress addr
+  doOtherStuff
+```
+
+There are a number of issues with this model and at some point I will describe
+them in detail and I am in the process of trying to fix them. At the moment, I am just playing around with
+the ideas here after learning some Erlang and I would be open to contributions from others.
+In the examples folder, there is a longer example of a supervisor which handles processes
+which may or may not fail.
