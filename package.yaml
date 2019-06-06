@@ -43,6 +43,9 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - stm-actor
+    - containers
+    - mtl
+    - random
 
 tests:
   stm-actor-test:

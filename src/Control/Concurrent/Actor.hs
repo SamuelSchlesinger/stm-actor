@@ -11,7 +11,7 @@ module Control.Concurrent.Actor
     ( ActionT, Address, Result(..), LinkException(..), (:->)(..),
       spawnM, spawnIO, spawn, link, watch, spawnLink, spawnWatch,
       next, nextMaybe, receive, send, flush,
-      myAddress, killAddress, throwToAddress ) where
+      myAddress, killAddress, throwToAddress, addressThreadId ) where
 
 import Control.Concurrent.Lifted
 import Control.Concurrent.STM
@@ -72,11 +72,16 @@ data LinkException e = LinkException ThreadId e
 
 instance Exception e => Exception (LinkException e)
 
+instance MonadState s m => MonadState s (ActionT msg m) where
+  get = lift get
+  put a = lift (put a)
+  state f = lift (state f)
+
 data Address msg = forall msg'. Address {
   address :: !(TQueue msg'),
   onExit :: !(TMVar (SomeException -> IO ())),
-  threadId :: ThreadId,
-  encode :: msg -> msg'
+  threadId :: !ThreadId,
+  encode :: !(msg -> msg')
 }
 
 instance Eq (Address msg) where
@@ -149,14 +154,15 @@ link Address{..} = ActionT $ \mailbox myOnExit -> do
       throwTo myThreadId (LinkException threadId e)
       theirs e
 
-watch :: (MonadBase IO m, Exception e) => Address msg' -> (e -> msg) -> ActionT msg m ()
+watch :: (MonadBase IO m, Exception e) => Address msg' -> (ThreadId -> e -> msg) -> ActionT msg m ()
 watch Address{..} enc = do
   me <- myAddress
   liftBase $ atomically $ do
     theirs <- takeTMVar onExit
     putTMVar onExit $ \e -> do
+      tid <- myThreadId
       case fromException e of
-        Just e_ -> send (enc e_) me >> theirs e
+        Just e_ -> send (enc tid e_) me >> theirs e
         Nothing -> theirs e
 
 spawnLink :: MonadBaseControl IO m => ActionT msg m a -> ActionT msg' m (Address msg, TMVar (Result a))
@@ -165,7 +171,7 @@ spawnLink actionT = do
   link addr
   return (addr, result)
 
-spawnWatch :: (Exception e, MonadBaseControl IO m) => ActionT msg' m a -> (e -> msg) -> ActionT msg m (Address msg', TMVar (Result a))
+spawnWatch :: (Exception e, MonadBaseControl IO m) => ActionT msg' m a -> (ThreadId -> e -> msg) -> ActionT msg m (Address msg', TMVar (Result a))
 spawnWatch actionT enc = do
   (addr, result) <- spawn actionT
   watch addr enc
@@ -206,6 +212,9 @@ send msg Address{..} = liftBase $ atomically $ writeTQueue address (encode msg)
 killAddress :: MonadBase IO m => Address msg -> ActionT msg' m ()
 killAddress Address{..} = ActionT $ \_ _ -> do
   killThread threadId
+
+addressThreadId :: Address msg -> ThreadId
+addressThreadId Address{..} = threadId
 
 throwToAddress :: (MonadBase IO m, Exception e) => Address msg -> e -> ActionT msg' m ()
 throwToAddress Address{..} e = ActionT $ \_ _ -> do
