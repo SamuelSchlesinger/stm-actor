@@ -11,8 +11,8 @@ data LaunchCodes = LaunchCodes
 
 data Message = FireTheMissiles | PetTheDog
 
-actor :: Address Pets -> Address LaunchCodes -> ActionT Message IO ()
-actor dog launcher = do
+action :: Address Pets -> Address LaunchCodes -> ActionT Message IO ()
+action dog launcher = do
   msg <- next
   case msg of
     FireTheMissles -> send LaunchCodes launcher
@@ -28,11 +28,21 @@ data JustPets = JustPets
 instance JustPets :-> Message where
   convert JustPets = PetTheDog
 
-actor :: Address (Address JustPets) -> ActionT Message IO ()
-actor addr = do
+action :: Address (Address JustPets) -> ActionT Message IO ()
+action addr = do
   pettingAddress <- myAddress
   send pettingAddress addr
   doOtherStuff
+```
+
+To spawn actors which perform these actions and wait until they're done,
+we can write:
+
+```haskell
+main = do
+  (addr, result) <- spawnIO (action dogPetter)
+  atomically $ readTMVar result
+  return ()
 ```
 
 There are a number of issues with this model and at some point I will describe
