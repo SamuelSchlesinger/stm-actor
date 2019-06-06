@@ -72,7 +72,6 @@ data LinkException e = LinkException ThreadId e
 
 instance Exception e => Exception (LinkException e)
 
--- | To send messages to actors, you need their address.
 data Address msg = forall msg'. Address {
   address :: !(TQueue msg'),
   onExit :: !(TMVar (SomeException -> IO ())),
@@ -92,8 +91,6 @@ instance Ord (Address msg) where
 instance Show (Address msg) where
   show (Address _ _ x _) = "Address " ++ show x
 
--- | This type represents the success or failure of an actor
---   to generate a value.
 data Result a = Failure SomeException
               | Success a
   deriving Show
