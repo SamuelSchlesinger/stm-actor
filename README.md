@@ -5,30 +5,30 @@ transformers, and the Haskell do notation, I've built a very simple library for
 emulating a subset of the Erlang actor model in Haskell.
 
 ```haskell
-data Pets = Pets
+data Scritches = Scritches
 
 data LaunchCodes = LaunchCodes
 
 data Message = FireTheMissiles | PetTheDog
 
-action :: Address Pets -> Address LaunchCodes -> ActionT Message IO ()
+action :: Address Scritches -> Address LaunchCodes -> ActionT Message IO ()
 action dog launcher = do
   msg <- next
   case msg of
     FireTheMissles -> send LaunchCodes launcher
-    PetTheDog -> send Pets dog
+    PetTheDog -> send Scritche dog
 ```
 
 In the above case, if we want to send an address to someone which doesn't allow
 them to send any missiles, we can achieve this with the following:
 
 ```haskell
-data JustPets = JustPets
+data JustScritches = JustScritches
 
-instance JustPets :-> Message where
-  convert JustPets = PetTheDog
+instance JustScritches :-> Message where
+  convert JustScritche = PetTheDog
 
-action :: Address (Address JustPets) -> ActionT Message IO ()
+action :: Address (Address JustScritches) -> ActionT Message IO ()
 action addr = do
   pettingAddress <- myAddress
   send pettingAddress addr
