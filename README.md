@@ -16,7 +16,7 @@ action dog launcher = do
   msg <- next
   case msg of
     FireTheMissles -> send LaunchCodes launcher
-    PetTheDog -> send Scritche dog
+    PetTheDog -> send Scritches dog
 ```
 
 In the above case, if we want to send an address to someone which doesn't allow
