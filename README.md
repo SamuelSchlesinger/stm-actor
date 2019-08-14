@@ -26,7 +26,7 @@ them to send any missiles, we can achieve this with the following:
 data JustScritches = JustScritches
 
 instance JustScritches :-> Message where
-  convert JustScritche = PetTheDog
+  convert JustScritches = PetTheDog
 
 action :: Address (Address JustScritches) -> ActionT Message IO ()
 action addr = do
