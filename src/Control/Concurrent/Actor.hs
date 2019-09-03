@@ -46,7 +46,13 @@
 --     send address \"Hello\"
 --     waitForOutcome result >>= print
 -- @
--- 
+--
+--  I have read many people saying that message passing
+--  actor models do not work with Haskell because of the
+--  type system, but I think this works pretty adequately,
+--  and not only that, it sort of forces you to think about
+--  the structure of your messages and the way they relate
+--  to one another.  
 module Control.Concurrent.Actor
     ( ActionT
     , Address
@@ -109,6 +115,7 @@ import Control.Monad hiding (fail)
 --
 -- > TMVar (Maybe SomeException -> IO ())
 --
+
 newtype ActionT msg m a = ActionT
   { unActionT :: TQueue msg
              -> TMVar (Maybe SomeException -> IO ())

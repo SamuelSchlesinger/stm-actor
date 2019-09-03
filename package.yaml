@@ -26,7 +26,6 @@ dependencies:
 - stm
 - lifted-base
 - transformers-base
-- time
 - lifted-base
 - monad-control
 

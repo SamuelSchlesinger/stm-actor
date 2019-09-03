@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: edfb389e71dc927618404ced684421f6f4da91cd62fd4aee2e116513b5ea5438
+-- hash: 32ec264794b4db662d40717c3b9226f58d8a1fb48f8f1abbe5ebd632e5a766d5
 
 name:           stm-actor
 version:        0.1.0.0
@@ -39,7 +39,6 @@ library
     , monad-control
     , mtl
     , stm
-    , time
     , transformers
     , transformers-base
   default-language: Haskell2010
@@ -53,12 +52,13 @@ executable example
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , containers
     , lifted-base
     , monad-control
     , mtl
+    , random
     , stm
     , stm-actor
-    , time
     , transformers
     , transformers-base
   default-language: Haskell2010
@@ -78,7 +78,6 @@ test-suite stm-actor-test
     , mtl
     , stm
     , stm-actor
-    , time
     , transformers
     , transformers-base
   default-language: Haskell2010
