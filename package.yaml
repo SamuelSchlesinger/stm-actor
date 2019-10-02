@@ -46,6 +46,7 @@ executables:
     - mtl
     - random
     - hashable
+    - unordered-containers
 
 tests:
   stm-actor-test:
