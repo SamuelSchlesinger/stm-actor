@@ -1,10 +1,10 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.31.1.
+-- This file has been generated from package.yaml by hpack version 0.31.2.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 32ec264794b4db662d40717c3b9226f58d8a1fb48f8f1abbe5ebd632e5a766d5
+-- hash: 8568bb161f1d954af5b1bf514c5633fb87a66c3d4d30189a6cd36547469fd3c5
 
 name:           stm-actor
 version:        0.1.0.0
@@ -53,6 +53,7 @@ executable example
   build-depends:
       base >=4.7 && <5
     , containers
+    , hashable
     , lifted-base
     , monad-control
     , mtl
