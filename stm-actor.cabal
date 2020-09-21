@@ -3,8 +3,8 @@ name:                stm-actor
 version:             0.1.1.0
 license:             MIT
 license-file:        LICENSE
-synopsis:            See the README
-description:         See the README.
+synopsis:            A simplistic actor model based on STM
+description:         A simplistic actor model based on STM.
 author:              Samuel Schlesinger
 maintainer:          samuel@simspace.com
 copyright:           2020 Samuel Schlesinger
