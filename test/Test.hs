@@ -67,4 +67,13 @@ main = hspec $ do
           forever do
             liftIO $ threadDelay 1000
         takeMVar mvar `shouldReturn` ()
+    describe "actor'sThreadId" do
+      it "is the real ThreadId of actors" do
+        mvar <- newEmptyMVar
+        diddler <- act $ forever do
+          tid <- actor'sThreadId
+          liftIO (putMVar mvar tid)
+        tid <- takeMVar mvar
+        killThread tid `shouldReturn` ()
+        
 

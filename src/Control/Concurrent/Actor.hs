@@ -24,6 +24,7 @@ module Control.Concurrent.Actor
 , receive
 , hoistActionT
 , link
+, actor'sThreadId
 ) where
 
 import Control.Concurrent
@@ -67,6 +68,7 @@ instance (MonadWriter w m, MonadReader r m, MonadState s m) => MonadRWS r w s (A
 data ActorContext message = forall a. ActorContext
   { onError      :: TVar (Either SomeException a -> IO ())
   , messageQueue :: Queue message
+  , actorThreadId :: ThreadId
   }
 
 -- | A handle to do things to actors, like sending them messages, fiddling
@@ -87,7 +89,7 @@ actFinally errorHandler (ActionT act) = do
   onError <- atomically $ newTVar errorHandler
   messageQueue <- atomically newQueue
   let ctx = ActorContext onError messageQueue
-  threadId <- forkFinally (act ctx) (\result -> atomically (readTVar onError) >>= ($ result))
+  threadId <- forkFinally (do { tid <- myThreadId; act (ActorContext onError messageQueue tid) }) (\result -> atomically (readTVar onError) >>= ($ result))
   pure $ Actor
     (\afterEffect -> modifyTVar onError (\f x -> f x <* afterEffect (leftToMaybe x)))
     threadId
@@ -122,8 +124,15 @@ instance Exception LinkKill
 
 -- | Link the lifetime of the given actor to this one. If the given actor
 -- dies, it will throw a 'LinkKill' exception to us with its 'ThreadId'
--- attached to it..
+-- attached to it.
 link :: MonadIO m => Actor message -> ActionT message' m ()
 link actor = do
-  tid <- liftIO myThreadId
+  tid <- actor'sThreadId
   liftIO . atomically $ addAfterEffect actor (\_mexc -> do { tid' <- myThreadId; throwTo tid (LinkKill tid') })
+
+-- | Returns the 'ThreadId' of the actor executing this action. This is
+-- possibly more efficient than 'liftIO'ing 'myThreadId', but more than
+-- that, it gives us the ability to grab it in arbitrary 'Applicative'
+-- contexts, rather than only in 'MonadIO' ones.
+actor'sThreadId :: Applicative m => ActionT message' m ThreadId
+actor'sThreadId = ActionT \(ActorContext _ _ tid) -> pure tid
