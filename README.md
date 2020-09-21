@@ -18,7 +18,7 @@ main = do
       -- we can do arbitrary things here with the reported changes, of course
       liftIO (appendFile "logfile" (show changes))
   watcher <- act do
-    link actor
+    link logger
     liftIO $ forever do
       waitClient client "cluster-resources" >>= \case
         Nothing -> pure ()
