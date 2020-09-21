@@ -8,6 +8,7 @@ this is meant to serve as a basis for writing simple, message-passing style
 of programs. Here is an example using the `etcd` library.
 
 ```haskell
+{-# LANGUAGE BlockArguments, LambdaCase, OverloadedStrings #-}
 import Network.Etcd
 
 main :: IO ()
