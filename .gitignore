@@ -1,3 +1,3 @@
-.stack-work/
-.*.swp
+dist-newstyle/
+.*.sw*
 tags
