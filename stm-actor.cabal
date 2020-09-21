@@ -1,4 +1,4 @@
-cabal-version:       >=1.10
+cabal-version:       2.4
 name:                stm-actor
 version:             0.1.0.0
 license:             MIT
