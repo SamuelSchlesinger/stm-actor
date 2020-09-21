@@ -1,3 +1,4 @@
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -28,6 +29,12 @@ import Control.Concurrent
 import Control.Monad.IO.Class
 import Control.Monad.Trans
 import Control.Monad.Reader
+import Control.Monad.State.Class
+import Control.Monad.Reader.Class
+import Control.Monad.Writer.Class
+import Control.Monad.RWS.Class
+import Control.Monad.Error.Class
+import Control.Monad.Cont.Class
 import Control.Concurrent.STM
 import Control.Exception
 import Data.Functor.Contravariant
@@ -40,27 +47,21 @@ newtype ActionT message m a = ActionT
     -> m a
   }
 
-instance Functor m => Functor (ActionT message m) where
-  fmap f (ActionT act) = ActionT (fmap f . act)
-
-instance Applicative m => Applicative (ActionT message m) where
-  pure x = ActionT \_ctx -> pure x
-  ActionT af <*> ActionT ax = ActionT \ctx -> af ctx <*> ax ctx
-
-instance Monad m => Monad (ActionT message m) where
-  ActionT ax >>= f = ActionT \ctx -> do
-    x <- ax ctx
-    runActionT (f x) ctx
-
-instance MonadIO m => MonadIO (ActionT message m) where
-  liftIO io = ActionT \_ctx -> liftIO io
-
-instance MonadTrans (ActionT message) where
-  lift a = ActionT \_ctx -> a
+deriving via ReaderT (ActorContext message) m instance Functor m => Functor (ActionT message m)
+deriving via ReaderT (ActorContext message) m instance Applicative m => Applicative (ActionT message m)
+deriving via ReaderT (ActorContext message) m instance Monad m => Monad (ActionT message m)
+deriving via ReaderT (ActorContext message) m instance MonadIO m => MonadIO (ActionT message m)
+deriving via ReaderT (ActorContext message) instance MonadTrans (ActionT message)
+deriving via ReaderT (ActorContext message) m instance MonadError e m => MonadError e (ActionT message m)
+deriving via ReaderT (ActorContext message) m instance MonadWriter w m => MonadWriter w (ActionT message m)
+deriving via ReaderT (ActorContext message) m instance MonadState s m => MonadState s (ActionT message m)
+deriving via ReaderT (ActorContext message) m instance MonadCont m => MonadCont (ActionT message m)
 
 instance MonadReader r m => MonadReader r (ActionT message m) where
-  ask = lift ask
-  local f (ActionT ma) = ActionT \ctx -> local f (ma ctx)
+  ask = ActionT (const ask)
+  local f (ActionT ma) = ActionT (fmap (local f) ma)
+
+instance (MonadWriter w m, MonadReader r m, MonadState s m) => MonadRWS r w s (ActionT message m)
 
 data ActorContext message = forall a. ActorContext
   { onError      :: TVar (Either SomeException a -> IO ())
