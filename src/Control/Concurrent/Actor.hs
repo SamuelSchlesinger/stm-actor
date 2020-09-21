@@ -1,3 +1,7 @@
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GADTs #-}
@@ -8,10 +12,13 @@ module Control.Concurrent.Actor
 , act
 , receiveSTM
 , receive
+, hoistActionT
 ) where
 
 import Control.Concurrent
 import Control.Monad.IO.Class
+import Control.Monad.Trans
+import Control.Monad.Reader
 import Control.Concurrent.STM
 import Control.Exception
 import Data.Functor.Contravariant
@@ -37,6 +44,13 @@ instance Monad m => Monad (ActionT message m) where
 
 instance MonadIO m => MonadIO (ActionT message m) where
   liftIO io = ActionT \_ctx -> liftIO io
+
+instance MonadTrans (ActionT message) where
+  lift a = ActionT \_ctx -> a
+
+instance MonadReader r m => MonadReader r (ActionT message m) where
+  ask = lift ask
+  local f (ActionT ma) = ActionT \ctx -> local f (ma ctx)
 
 data ActorContext message = forall a. ActorContext
   { onError      :: TVar (Either SomeException a -> IO ())
@@ -76,3 +90,6 @@ receive f = ActionT \ctx -> do
 
 receiveSTM :: MonadIO m => (message -> STM a) -> ActionT message m a
 receiveSTM f = ActionT \ctx -> liftIO (atomically (dequeue (messageQueue ctx) >>= f))
+
+hoistActionT :: (forall a. m a -> n a) -> ActionT message m a -> ActionT message n a
+hoistActionT f (ActionT act) = ActionT (fmap f act)

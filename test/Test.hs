@@ -9,6 +9,8 @@ import Control.Concurrent
 import Control.Monad
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class
+import Control.Monad.Reader
+import Control.Monad.Trans
 import Control.Concurrent.Actor
 import Control.Exception
 
@@ -24,20 +26,34 @@ main = hspec $ do
         mvar <- newEmptyMVar
         actFinally (either (const (putMVar mvar True)) (const (putMVar mvar False))) (liftIO $ throwIO Underflow)
         takeMVar mvar `shouldReturn` True
-    describe "act" do
-      it "forks a real-live thread" do
-        actorHandle <- act (forever $ pure ())
-        killThread (threadId actorHandle)
     describe "receive" do
       it "can receive messages" do
         mvar <- newEmptyMVar
-        actorHandle <- (act . receive) \msg -> do
+        actor <- (act . receive) \msg -> do
           liftIO $ putMVar mvar msg
-        atomically (send actorHandle ())
+        atomically (send actor ())
         liftIO $ takeMVar mvar
     describe "receiveSTM" do
       it "can receive messages" do
         tvar <- newTVarIO False
-        actorHandle <- act (receiveSTM (writeTVar tvar))
-        atomically (send actorHandle True)
-        atomically $ readTVar tvar >>= \case { True -> pure (); False -> retry }
+        actor <- act (receiveSTM (writeTVar tvar))
+        atomically (send actor True)
+        atomically do
+          readTVar tvar >>= \case
+            True -> pure ()
+            False -> retry
+    describe "hoistActionT" do
+      it "hoists ActionTs" do
+        tvar <- newTVarIO (Right False)
+        actor <- (act . hoistActionT (flip runReaderT True)) do
+          stuff <- ask
+          liftIO (putStrLn "Heya")
+          if stuff then liftIO (atomically $ writeTVar tvar (Right True))
+                   else liftIO (atomically $ writeTVar tvar (Left ()))
+        atomically
+          (readTVar tvar >>= \case
+            Right True -> pure "Yay, we can hoist ReaderT actions"
+            Right False -> retry
+            Left () -> pure "Boo!")
+          `shouldReturn` "Yay, we can hoist ReaderT actions"
+
