@@ -23,6 +23,7 @@ module Control.Concurrent.Actor
 , receiveSTM
 , receive
 , hoistActionT
+, link
 ) where
 
 import Control.Concurrent
@@ -113,3 +114,16 @@ receiveSTM f = ActionT \ctx -> liftIO (atomically (dequeue (messageQueue ctx) >>
 -- monad to another.
 hoistActionT :: (forall a. m a -> n a) -> ActionT message m a -> ActionT message n a
 hoistActionT f (ActionT act) = ActionT (fmap f act)
+
+data LinkKill = LinkKill ThreadId
+  deriving Show
+
+instance Exception LinkKill
+
+-- | Link the lifetime of the given actor to this one. If the given actor
+-- dies, it will throw a 'LinkKill' exception to us with its 'ThreadId'
+-- attached to it..
+link :: MonadIO m => Actor message -> ActionT message' m ()
+link actor = do
+  tid <- liftIO myThreadId
+  liftIO . atomically $ addAfterEffect actor (\_mexc -> do { tid' <- myThreadId; throwTo tid (LinkKill tid') })

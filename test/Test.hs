@@ -56,4 +56,15 @@ main = hspec $ do
             Right False -> retry
             Left () -> pure "Boo!")
           `shouldReturn` "Yay, we can hoist ReaderT actions"
+    describe "link" do
+      it "links actors" do
+        mvar <- newEmptyMVar
+        diddler <- act do
+          liftIO $ threadDelay 1000000
+          liftIO $ throwIO Underflow
+        fiddler <- actFinally (either (const (putMVar mvar ())) (const (pure ()))) do
+          link diddler
+          forever do
+            liftIO $ threadDelay 1000
+        takeMVar mvar `shouldReturn` ()
 
