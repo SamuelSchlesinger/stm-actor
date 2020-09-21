@@ -16,13 +16,13 @@ main = do
   logger <- act do
     receive \changes -> do
       -- we can do arbitrary things here with the reported changes, of course
-      appendFile "logfile" (show changes)
+      liftIO (appendFile "logfile" (show changes))
   watcher <- act do
     link actor
-    forever do
+    liftIO $ forever do
       waitClient client "cluster-resources" >>= \case
         Nothing -> pure ()
-        Just updatedNode -> send actor updatedNode
+        Just updatedNode -> atomically (send actor updatedNode)
 ```
 
 If you want multi-node actors or you care about throughput, this
