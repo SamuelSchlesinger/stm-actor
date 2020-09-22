@@ -56,6 +56,13 @@ main = hspec $ do
             Right False -> retry
             Left () -> pure "Boo!")
           `shouldReturn` "Yay, we can hoist ReaderT actions"
+    describe "murder" do
+      it "kills actors" do
+        mvar <- newEmptyMVar
+        actor <- actFinally (either (const (putMVar mvar ())) (const (pure ()))) do
+          liftIO $ threadDelay 1000000
+        murder actor
+        takeMVar mvar `shouldReturn` ()
     describe "link" do
       it "links actors" do
         mvar <- newEmptyMVar
@@ -67,13 +74,21 @@ main = hspec $ do
           forever do
             liftIO $ threadDelay 1000
         takeMVar mvar `shouldReturn` ()
-    describe "actor'sThreadId" do
-      it "is the real ThreadId of actors" do
+    describe "linkSTM" do
+      it "links actors too" do
+        mvar <- newEmptyMVar
+        diddler <- actFinally (either (const (putMVar mvar ())) (const (pure ()))) do
+          liftIO $ threadDelay 1000000
+        fiddler <- act do
+          liftIO $ threadDelay 1000000
+        atomically (linkSTM diddler fiddler)
+        murder fiddler
+        takeMVar mvar `shouldReturn` ()
+    describe "self" do
+      it "is the real Actor of actors" do
         mvar <- newEmptyMVar
         diddler <- act $ forever do
-          tid <- actor'sThreadId
-          liftIO (putMVar mvar tid)
-        tid <- takeMVar mvar
-        killThread tid `shouldReturn` ()
-        
-
+          me <- self
+          liftIO (putMVar mvar me)
+        them <- takeMVar mvar
+        diddler `shouldBe` them
