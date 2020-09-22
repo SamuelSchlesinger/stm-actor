@@ -92,12 +92,17 @@ data Actor message = Actor
   , send' :: message -> STM ()
   }
 
+-- | Once the 'Actor' dies, all of the effects that have been added via
+-- this function will run. This is how you can implement your own functions
+-- like 'link' or 'linkSTM'.
 addAfterEffect :: Actor message -> (Maybe SomeException -> IO ()) -> STM ()
 addAfterEffect = addAfterEffect'
 
+-- | Retrieve the 'ThreadId' associated with this 'Actor'.
 threadId :: Actor message -> ThreadId
 threadId = threadId'
 
+-- | Send a message to this 'Actor'.
 send :: Actor message -> message -> STM ()
 send = send'
 
