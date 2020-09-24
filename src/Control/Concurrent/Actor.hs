@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -24,6 +25,10 @@ module Control.Concurrent.Actor
 , send
 , addAfterEffect
 , threadId
+, livenessCheck
+, withLivenessCheck
+, Liveness(..)
+, ActorDead(..)
 , actFinally
 , act
 , receiveSTM
@@ -51,7 +56,7 @@ import Control.Monad.RWS.Class ( MonadRWS )
 import Control.Monad.Error.Class ( MonadError )
 import Control.Monad.Cont.Class ( MonadCont )
 import Control.Concurrent.STM
-    ( STM, atomically, newTVar, readTVar, modifyTVar )
+    ( STM, atomically, newTVar, newTVarIO, readTVar, modifyTVar, writeTVar, TVar, throwSTM )
 import Control.Exception ( SomeException, Exception )
 import Data.Functor.Contravariant ( Contravariant(contramap) )
 import Data.Queue ( dequeue, enqueue, newQueue, Queue )
@@ -91,7 +96,35 @@ data Actor message = Actor
   { addAfterEffect' :: (Maybe SomeException -> IO ()) -> STM ()
   , threadId' :: ThreadId
   , send' :: message -> STM ()
+  , status :: TVar (Maybe (Maybe SomeException))
   }
+
+-- | The liveness state of a particular 'Actor'.
+data Liveness = Alive | Completed | ThrewException SomeException
+  deriving Show
+
+-- | Checks the 'Liveness' of a particular 'Actor'
+livenessCheck :: Actor message -> STM Liveness
+livenessCheck actor = do
+  readTVar (status actor) >>= \case
+    Nothing -> pure Alive
+    Just completion -> pure (maybe Completed ThrewException completion)
+
+-- | The exception thrown when we try to 'send' or 'addAfterEffect' to an
+-- 'Actor' which has died.
+data ActorDead = ActorDead (Maybe SomeException)
+  deriving Show
+
+instance Exception ActorDead
+
+-- | Allows us to wrap 'addAfterEffect', 'send', and any other custom
+-- combinators in a liveness check. This causes contention on the
+-- underlying 'TVar' that contains the status report of the 'Actor', and
+-- thus should be avoided where possible. That being said, it is also
+-- useful to avoid sending messages or add after effects to dead actors,
+-- which will certainly be lost forever.
+withLivenessCheck :: (Actor message -> x -> STM ()) -> Actor message -> x -> STM ()
+withLivenessCheck f actorHandle x = readTVar (status actorHandle) >>= maybe (f actorHandle x) (throwSTM . ActorDead)
 
 -- | Once the 'Actor' dies, all of the effects that have been added via
 -- this function will run. This is how you can implement your own functions
@@ -108,22 +141,23 @@ send :: Actor message -> message -> STM ()
 send = send'
 
 instance Eq (Actor message) where
-  Actor _ x _ == Actor _ y _ = x == y
+  Actor _ x _ _ == Actor _ y _ _ = x == y
 
 instance Show (Actor message) where
   show Actor{threadId'} = show threadId'
 
 instance Contravariant Actor where
-  contramap f (Actor addAfterEffect' threadId' ((. f) -> send')) = Actor{..}
+  contramap f (Actor addAfterEffect' threadId' ((. f) -> send') status) = Actor{..}
 
 -- | Perform some 'ActionT' in a thread, with some cleanup afterwards.
 actFinally :: (Either SomeException a -> IO ()) -> ActionT message IO a -> IO (Actor message)
 actFinally errorHandler (ActionT actionT) = do
   onErrorTVar <- atomically $ newTVar errorHandler
   messageQueue <- atomically newQueue
+  status <- newTVarIO Nothing
   let addAfterEffect' afterEffect = modifyTVar onErrorTVar (\f x -> f x <* afterEffect (leftToMaybe x))
   let send' = enqueue messageQueue
-  threadId' <- forkFinally (do { threadId' <- myThreadId; actionT (ActorContext messageQueue Actor{..}) }) (\result -> atomically (readTVar onErrorTVar) >>= ($ result))
+  threadId' <- forkFinally (do { threadId' <- myThreadId; actionT (ActorContext messageQueue Actor{..}) }) (\result -> atomically (do { writeTVar status (Just (leftToMaybe result)); readTVar onErrorTVar }) >>= ($ result))
   pure $ Actor {..}
   where
     leftToMaybe (Left x) = Just x

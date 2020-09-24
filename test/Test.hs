@@ -92,3 +92,34 @@ main = hspec $ do
           liftIO (putMVar mvar me)
         them <- takeMVar mvar
         diddler `shouldBe` them
+    describe "livenessCheck" do
+      it "notes when an actor is Completed" do
+        diddler <- act (pure ())
+        threadDelay 1000000
+        atomically (livenessCheck diddler) >>= \case
+          Completed -> pure ()
+          _ -> expectationFailure "Liveness check did not result in Completed"
+      it "notes when an actor ThrewException" do
+        diddler <- act (liftIO $ throwIO Underflow)
+        threadDelay 1000000
+        atomically (livenessCheck diddler) >>= \case
+          ThrewException e -> pure ()
+          _ -> expectationFailure "Liveness check did not result in ThrewException"
+      it "notes when an actor is Alive" do
+        diddler <- act (liftIO $ threadDelay 1000000)
+        atomically (livenessCheck diddler) >>= \case
+          Alive -> pure ()
+          _ -> expectationFailure "Liveness check did not result in Alive"
+    describe "withLivenessCheck" do
+      it "doesn't let you add after effects to dead actors" do
+        diddler <- act (pure ())
+        threadDelay 1000000
+        atomically (withLivenessCheck addAfterEffect diddler (const (pure ()))) `shouldThrow` \case
+          ActorDead Nothing -> True
+          _ -> False
+      it "doesn't let you send messages to dead actors" do
+        diddler <- act (pure ())
+        threadDelay 1000000
+        atomically (withLivenessCheck send diddler "HEY") `shouldThrow` \case
+          ActorDead Nothing -> True
+          _ -> False
