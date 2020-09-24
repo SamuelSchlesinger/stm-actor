@@ -110,8 +110,8 @@ livenessCheck actor = do
     Nothing -> pure Alive
     Just completion -> pure (maybe Completed ThrewException completion)
 
--- | The exception thrown when we try to 'send' or 'addAfterEffect' to an
--- 'Actor' which has died.
+-- | The exception thrown when we run an action wrapped in
+-- 'withLivenessCheck' on an 'Actor' which has died.
 data ActorDead = ActorDead (Maybe SomeException)
   deriving Show
 
@@ -122,7 +122,9 @@ instance Exception ActorDead
 -- underlying 'TVar' that contains the status report of the 'Actor', and
 -- thus should be avoided where possible. That being said, it is also
 -- useful to avoid sending messages or add after effects to dead actors,
--- which will certainly be lost forever.
+-- which will certainly be lost forever. If the 'Actor' is 'Completed' or
+-- 'ThrewException', then we throw an 'ActorDead' exception with 'Nothing'
+-- or 'Just' the exception, respectively.
 withLivenessCheck :: (Actor message -> x -> STM ()) -> Actor message -> x -> STM ()
 withLivenessCheck f actorHandle x = readTVar (status actorHandle) >>= maybe (f actorHandle x) (throwSTM . ActorDead)
 
