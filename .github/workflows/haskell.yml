@@ -7,7 +7,7 @@ on:
     branches: [ master ]
 
 jobs:
-  build-ghc-8.10:
+  build-ghc-8_10:
 
     runs-on: ubuntu-latest
 
@@ -38,7 +38,7 @@ jobs:
       run: cabal build --enable-tests --enable-benchmarks all
     - name: Run tests
       run: cabal test all
-  build-ghc-8.8:
+  build-ghc-8_8:
 
     runs-on: ubuntu-latest
 
@@ -69,7 +69,7 @@ jobs:
       run: cabal build --enable-tests --enable-benchmarks all
     - name: Run tests
       run: cabal test all
-  build-ghc-8.6:
+  build-ghc-8_6:
 
     runs-on: ubuntu-latest
 
