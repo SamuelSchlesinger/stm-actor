@@ -46,6 +46,7 @@ module Control.Concurrent.Actor
 import Control.Concurrent
     ( forkFinally, myThreadId, throwTo, ThreadId )
 import Control.Monad.IO.Class ( MonadIO(..) )
+import Control.Monad.IO.Unlift ( MonadUnliftIO(..) )
 import Control.Monad.Trans ( MonadTrans(..) )
 import Control.Monad.Reader
     ( MonadReader(local, ask), ReaderT(ReaderT) )
@@ -77,6 +78,7 @@ deriving via ReaderT (ActorContext message) m instance MonadError e m => MonadEr
 deriving via ReaderT (ActorContext message) m instance MonadWriter w m => MonadWriter w (ActionT message m)
 deriving via ReaderT (ActorContext message) m instance MonadState s m => MonadState s (ActionT message m)
 deriving via ReaderT (ActorContext message) m instance MonadCont m => MonadCont (ActionT message m)
+deriving via ReaderT (ActorContext message) m instance MonadUnliftIO m => MonadUnliftIO (ActionT message m)
 
 instance MonadReader r m => MonadReader r (ActionT message m) where
   ask = ActionT (const ask)
