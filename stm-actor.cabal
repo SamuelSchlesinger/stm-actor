@@ -46,7 +46,7 @@ test-suite stm-actor-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Test.hs
-  build-depends:       base >=4.12 && <4.15,
+  build-depends:       base >=4.12 && <4.16,
                        stm >=2.1,
                        stm-queue >=0.1,
                        hspec >=2.7.4,
