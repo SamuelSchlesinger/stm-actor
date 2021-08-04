@@ -1,6 +1,6 @@
 cabal-version:       2.4
 name:                stm-actor
-version:             0.2.3.0
+version:             0.2.3.1
 license:             MIT
 license-file:        LICENSE
 synopsis:            A simplistic actor model based on STM
@@ -21,7 +21,11 @@ tested-with:         GHC ==8.6.1 ||
                          ==8.8.3 ||
                          ==8.8.4 ||
                          ==8.10.1 ||
-                         ==8.10.2
+                         ==8.10.2 ||
+                         ==8.10.3 ||
+                         ==8.10.4 ||
+                         ==8.10.5 ||
+                         ==9.0.1
 
 source-repository head
   type: git 
@@ -29,7 +33,7 @@ source-repository head
 
 library
   exposed-modules:     Control.Concurrent.Actor
-  build-depends:       base >=4.12 && <4.15,
+  build-depends:       base >=4.12 && <4.16,
                        stm >=2.1,
                        stm-queue >=0.1,
                        mtl >=1.0,
