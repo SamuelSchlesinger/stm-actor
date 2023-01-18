@@ -13,7 +13,7 @@ import Network.Etcd
 main :: IO ()
 main = do
   client <- createClient ["machine-1", "machine-2", "machine-3"]
-  logger <- act do
+  logger <- act . forever $ do
     receive \changes -> do
       -- we can do arbitrary things here with the reported changes, of course
       liftIO (appendFile "logfile" (show changes))
