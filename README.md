@@ -29,4 +29,3 @@ If you want multi-node actors or you care about throughput, this
 is not the package for you. The design is optimized to have low latency on
 message receipt, and to allow for interactions between actors in transactions, using
 Haskell's software transactional memory.
-
