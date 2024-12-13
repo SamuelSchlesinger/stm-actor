@@ -18,7 +18,7 @@ source-repository head
 
 library
   exposed-modules:     Control.Concurrent.Actor
-  build-depends:       base >=4.12,
+  build-depends:       base >=4.12 && < 5,
                        stm >=2.1,
                        stm-queue >=0.2,
                        mtl >=1.0,
