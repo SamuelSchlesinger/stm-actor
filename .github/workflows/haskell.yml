@@ -12,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -21,19 +22,24 @@ jobs:
     name: GHC ${{ matrix.ghc-version }}
 
     steps:
-    - uses: actions/checkout@v4
-    - uses: haskell-actions/setup@v2
+    - uses: actions/checkout@v7
+    - name: Set up Haskell
+      id: setup-haskell
+      uses: haskell-actions/setup@v2
       with:
         ghc-version: ${{ matrix.ghc-version }}
         cabal-version: '3.16.1.0'
+        cabal-update: false
 
     - name: Cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
-        path: ~/.cabal
-        key: ${{ runner.os }}-ghc-${{ matrix.ghc-version }}-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+        path: |
+          ${{ steps.setup-haskell.outputs.cabal-store }}
+          ~/.cabal/packages
+        key: ${{ runner.os }}-${{ runner.arch }}-ghc-${{ matrix.ghc-version }}-${{ hashFiles('**/*.cabal', 'cabal.project') }}
         restore-keys: |
-          ${{ runner.os }}-ghc-${{ matrix.ghc-version }}-
+          ${{ runner.os }}-${{ runner.arch }}-ghc-${{ matrix.ghc-version }}-
 
     - name: Install dependencies
       run: |
@@ -48,7 +54,7 @@ jobs:
       run: |
         cabal check
         cabal haddock all --haddock-for-hackage
-        cabal sdist stm-actor
+        cabal sdist pkg:stm-actor
 
   lower-bounds:
     runs-on: ubuntu-latest
@@ -56,19 +62,24 @@ jobs:
     name: Oldest dependencies
 
     steps:
-    - uses: actions/checkout@v4
-    - uses: haskell-actions/setup@v2
+    - uses: actions/checkout@v7
+    - name: Set up Haskell
+      id: setup-haskell
+      uses: haskell-actions/setup@v2
       with:
         ghc-version: '9.6.7'
         cabal-version: '3.16.1.0'
+        cabal-update: false
 
     - name: Cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
-        path: ~/.cabal
-        key: ${{ runner.os }}-ghc-9.6.7-oldest-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+        path: |
+          ${{ steps.setup-haskell.outputs.cabal-store }}
+          ~/.cabal/packages
+        key: ${{ runner.os }}-${{ runner.arch }}-ghc-9.6.7-oldest-${{ hashFiles('**/*.cabal', 'cabal.project') }}
         restore-keys: |
-          ${{ runner.os }}-ghc-9.6.7-oldest-
+          ${{ runner.os }}-${{ runner.arch }}-ghc-9.6.7-oldest-
 
     - name: Build and test oldest dependency plan
       run: |
