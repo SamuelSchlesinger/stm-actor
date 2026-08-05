@@ -22,11 +22,16 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask, runReaderT)
 import Data.Functor.Contravariant (contramap)
 import Data.IORef
+import qualified MailboxWindTunnel
 import System.Timeout
 import Test.Hspec
 
 main :: IO ()
 main = hspec do
+  describe "Mailbox Wind Tunnel" do
+    it "completes its measured quick-mode smoke test" do
+      MailboxWindTunnel.quickSmoke `shouldReturn` Right ()
+
   describe "Control.Concurrent.Actor" do
     describe "actFinally" do
       it "runs its handler on success" do
