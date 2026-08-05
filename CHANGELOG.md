@@ -17,8 +17,6 @@
   `actBounded` and `actFinallyBounded`.
 * Upgrade to `stm-queue-0.2.1` and use its incremental real-time queue for both
   unbounded and bounded mailboxes.
-* Add the interactive `mailbox-wind-tunnel` demo with automatic presentation,
-  reproducible JSON output, and end-to-end smoke coverage.
 * Add deterministic lifecycle regression tests and bounded test waits.
 * Run the concurrency suite with multiple runtime capabilities.
 * Validate the oldest compatible dependency plan in CI.

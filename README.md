@@ -118,41 +118,6 @@ helper itself can remain blocked while the recipient uses
 `MurderKill` exception. Like any synchronous `throwTo`, it can block while the
 target is uninterruptibly masking asynchronous exceptions.
 
-## Mailbox Wind Tunnel demo
-
-The package includes a live three-phase demonstration of the queue and actor
-semantics:
-
-```console
-cabal run mailbox-wind-tunnel
-```
-
-The automatic presentation measures alternating first-dequeue trials for
-`TQueue` and `stm-queue`, compares bounded and unbounded actors under producer
-pressure, and then kills a full actor while checked senders are blocked. The
-display is driven by the same structured report used by the machine-readable
-mode; it does not contain canned performance numbers.
-
-```console
-# Explore individual phases with b/p/k/a/q controls.
-cabal run mailbox-wind-tunnel -- --interactive
-
-# Emit the raw samples and accounting results as JSON.
-cabal run -v0 mailbox-wind-tunnel -- --json
-
-# Short configuration used by the test suite and useful for smoke checks.
-cabal run -v0 mailbox-wind-tunnel -- --json --quick
-```
-
-Burst trials alternate implementation order in isolated batches and report
-per-operation estimates for first-dequeue latency; queue construction and
-population remain outside the timed region. Batching keeps sub-microsecond
-operations measurable on coarser monotonic clocks. The backpressure phase
-counts committed sends and claimed messages in the same STM transactions as
-the corresponding mailbox operations, making the displayed queue depth exact.
-As elsewhere in this package, “real-time” describes incremental algorithmic
-work rather than a hard wall-clock guarantee from GHC or the operating system.
-
 ## Scope and compatibility
 
 This package deliberately does not provide distributed actors, durable
