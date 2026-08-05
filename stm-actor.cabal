@@ -1,10 +1,15 @@
 cabal-version:       2.4
 name:                stm-actor
-version:             0.3.1.1
+version:             0.4.0.0
 license:             MIT
 license-file:        LICENSE
-synopsis:            A simplistic actor model based on STM
-description:         A simplistic actor model based on STM.
+synopsis:            Process-local actors with transactional mailboxes
+description:
+  Lightweight process-local actors backed by STM and incrementally rotated
+  real-time queues. Unbounded and bounded mailbox sends compose with arbitrary
+  STM transactions, with bounded mailboxes providing backpressure. Lifecycle
+  checks, transactional waiting, completion callbacks, and one-way links
+  support reliable coordination.
 author:              Samuel Schlesinger
 maintainer:          sgschlesinger@gmail.com
 copyright:           2020 Samuel Schlesinger
@@ -12,33 +17,47 @@ category:            Control
 homepage:            https://github.com/SamuelSchlesinger/stm-actor
 bug-reports:         https://github.com/SamuelSchlesinger/stm-actor/issues
 build-type:          Simple
-extra-source-files:  CHANGELOG.md
+extra-doc-files:     CHANGELOG.md
+                     README.md
 tested-with:         GHC ==9.6.7
+                   , GHC ==9.8.4
+                   , GHC ==9.10.3
+                   , GHC ==9.12.4
+                   , GHC ==9.14.1
 
 source-repository head
-  type: git 
+  type: git
   location: https://github.com/samuelschlesinger/stm-actor
 
+common warnings
+  ghc-options:          -Wall
+                        -Wcompat
+                        -Widentities
+                        -Wincomplete-uni-patterns
+                        -Wincomplete-record-updates
+
 library
+  import:              warnings
   exposed-modules:     Control.Concurrent.Actor
-  build-depends:       base >=4.12 && < 5,
-                       stm >=2.1,
-                       stm-queue >=0.2,
-                       mtl >=1.0,
-                       unliftio-core >= 0.2,
-                       transformers >=0.2
+  build-depends:       base >=4.18 && <5,
+                       stm >=2.5 && <2.6,
+                       stm-queue >=0.2.1 && <0.3,
+                       mtl >=1.0 && <2.4,
+                       unliftio-core >=0.2 && <0.3,
+                       transformers >=0.2 && <0.7
   hs-source-dirs:      src
   default-language:    Haskell2010
 
 test-suite stm-actor-test
+  import:              warnings
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Test.hs
-  build-depends:       base >=4.12 && <5,
-                       stm >=2.1,
-                       stm-queue >=0.2,
-                       hspec >=2.7.4,
-                       mtl >=1.0,
+  build-depends:       base >=4.18 && <5,
+                       stm >=2.5 && <2.6,
+                       hspec >=2.7.4 && <2.12,
+                       mtl >=1.0 && <2.4,
                        stm-actor
-  other-extensions:    PostfixOperators, TypeApplications, BlockArguments
+  other-extensions:    BlockArguments, LambdaCase
+  ghc-options:          -threaded -rtsopts
   default-language:    Haskell2010

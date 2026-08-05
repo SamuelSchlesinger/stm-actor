@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc-version: ['9.6.7', '9.8.4', '9.10.1']
+        ghc-version: ['9.6.7', '9.8.4', '9.10.3', '9.12.4', '9.14.1']
 
     name: GHC ${{ matrix.ghc-version }}
 
@@ -25,21 +25,52 @@ jobs:
     - uses: haskell-actions/setup@v2
       with:
         ghc-version: ${{ matrix.ghc-version }}
-        cabal-version: '3.14'
+        cabal-version: '3.16.1.0'
 
     - name: Cache
       uses: actions/cache@v4
       with:
         path: ~/.cabal
-        key: ${{ runner.os }}-ghc-${{ matrix.ghc-version }}-${{ hashFiles('**/*.cabal') }}
+        key: ${{ runner.os }}-ghc-${{ matrix.ghc-version }}-${{ hashFiles('**/*.cabal', 'cabal.project') }}
         restore-keys: |
           ${{ runner.os }}-ghc-${{ matrix.ghc-version }}-
 
     - name: Install dependencies
       run: |
         cabal update
-        cabal build --only-dependencies --enable-tests --enable-benchmarks
+        cabal build --only-dependencies --enable-tests
     - name: Build
-      run: cabal build --enable-tests --enable-benchmarks all
+      run: cabal build --enable-tests all --ghc-options=-Werror
     - name: Run tests
-      run: cabal test all
+      run: cabal test all --test-options='+RTS -N2 -RTS'
+    - name: Package checks
+      if: matrix.ghc-version == '9.14.1'
+      run: |
+        cabal check
+        cabal haddock all --haddock-for-hackage
+        cabal sdist stm-actor
+
+  lower-bounds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: Oldest dependencies
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: haskell-actions/setup@v2
+      with:
+        ghc-version: '9.6.7'
+        cabal-version: '3.16.1.0'
+
+    - name: Cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cabal
+        key: ${{ runner.os }}-ghc-9.6.7-oldest-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+        restore-keys: |
+          ${{ runner.os }}-ghc-9.6.7-oldest-
+
+    - name: Build and test oldest dependency plan
+      run: |
+        cabal update
+        cabal test all --enable-tests --prefer-oldest --ghc-options=-Werror --test-options='+RTS -N2 -RTS'
