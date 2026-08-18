@@ -48,13 +48,20 @@ jobs:
     - name: Build
       run: cabal build --enable-tests all --ghc-options=-Werror
     - name: Run tests
-      run: cabal test all --test-options='+RTS -N2 -RTS'
+      run: cabal test all --ghc-options=-Werror --test-options='+RTS -N2 -RTS'
     - name: Package checks
       if: matrix.ghc-version == '9.14.1'
       run: |
         cabal check
         cabal haddock all --haddock-for-hackage
-        cabal sdist pkg:stm-actor
+        sdist_workspace="$(mktemp -d)"
+        cabal sdist pkg:stm-actor --output-directory="$sdist_workspace"
+        sdist_archive="$(find "$sdist_workspace" -maxdepth 1 -name '*.tar.gz' -print -quit)"
+        tar -xzf "$sdist_archive" -C "$sdist_workspace"
+        sdist_source="${sdist_archive%.tar.gz}"
+        cd "$sdist_source"
+        cabal build --enable-tests all --ghc-options=-Werror
+        cabal test all --ghc-options=-Werror --test-options='+RTS -N2 -RTS'
 
   lower-bounds:
     runs-on: ubuntu-latest

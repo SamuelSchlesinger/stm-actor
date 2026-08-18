@@ -163,14 +163,21 @@ main = hspec do
         within "remaining after-effects" (takeMVar effectsDrained)
           `shouldReturn` ()
 
-    describe "sendChecked and trySend" do
-      it "send while alive and reject messages after completion" do
+    describe "sending" do
+      it "sends while alive and rejects normal sends after completion" do
         result <- newEmptyMVar
         actor <- act $ receive (liftIO . putMVar result)
-        atomically (trySend actor "hello") `shouldReturn` True
+        atomically (trySend actor "hello") >>= \case
+          Sent -> pure ()
+          sendResult -> expectationFailure
+            ("expected Sent, got " <> show sendResult)
         within "checked message" (takeMVar result) `shouldReturn` "hello"
         _ <- within "receiver completion" (awaitStopped actor)
-        atomically (trySend actor "late") `shouldReturn` False
+        atomically (trySend actor "late") >>= \case
+          ActorStopped _ -> pure ()
+          sendResult -> expectationFailure
+            ("expected ActorStopped, got " <> show sendResult)
+        atomically (send actor "late") `shouldThrow` isActorDead
         atomically (sendChecked actor "late") `shouldThrow` isActorDead
 
     describe "mailbox" do
@@ -213,22 +220,50 @@ main = hspec do
         within "bounded FIFO delivery" (takeMVar result)
           `shouldReturn` ["first", "second"]
 
-      it "lets checked senders observe actor shutdown while the queue is full" do
+      it "rolls back mailbox occupancy with a rolled-back send" do
+        blocker <- newEmptyMVar
+        actor <- actBounded 1 (liftIO (takeMVar blocker))
+        atomically
+          ((send actor "rolled back" >> retry) `orElse` pure ())
+        atomically (trySend actor "committed") >>= \case
+          Sent -> pure ()
+          sendResult -> expectationFailure
+            ("expected Sent after rollback, got " <> show sendResult)
+        murder actor
+        _ <- within "rollback actor shutdown" (awaitStopped actor)
+        pure ()
+
+      it "reports full mailboxes without retrying and observes shutdown" do
         blocker <- newEmptyMVar
         actor <- actBounded 1 (liftIO (takeMVar blocker))
         atomically (send actor "first")
-        let attempt =
-              (trySend actor "second" >>= \sent ->
-                pure (if sent then "sent" else "stopped"))
-                `orElse` pure "full"
-
-        atomically attempt `shouldReturn` "full"
+        atomically (trySend actor "second") >>= \case
+          MailboxFull -> pure ()
+          sendResult -> expectationFailure
+            ("expected MailboxFull, got " <> show sendResult)
         murder actor
         _ <- within "full bounded actor shutdown" (awaitStopped actor)
-        atomically attempt `shouldReturn` "stopped"
-        atomically
-          ((send actor "second" >> pure True) `orElse` pure False)
-          `shouldReturn` False
+        atomically (trySend actor "second") >>= \case
+          ActorStopped _ -> pure ()
+          sendResult -> expectationFailure
+            ("expected ActorStopped, got " <> show sendResult)
+        atomically (send actor "second") `shouldThrow` isActorDead
+
+      it "wakes a blocked normal sender when the actor stops" do
+        blocker <- newEmptyMVar
+        actor <- actBounded 1 (liftIO (takeMVar blocker))
+        atomically (send actor "first")
+        sendResult <- newEmptyMVar
+        _ <- forkIO $ tryActorDeadIO (atomically (send actor "second"))
+          >>= putMVar sendResult
+        timeout 100000 (takeMVar sendResult) >>= \case
+          Nothing -> pure ()
+          Just _ -> expectationFailure "send completed while the mailbox was full"
+        murder actor
+        _ <- within "blocked-sender actor shutdown" (awaitStopped actor)
+        within "blocked sender wakeup" (takeMVar sendResult) >>= \case
+          Left _ -> pure ()
+          Right () -> expectationFailure "send unexpectedly committed"
 
     describe "receive" do
       it "can receive messages" do
@@ -306,6 +341,32 @@ main = hspec do
         _ <- actFinally (putMVar result) (link target)
         outcome <- within "late link failure" (takeMVar result)
         outcome `shouldSatisfy` isLinkKill
+
+      it "signals a link before a blocking target completion handler" do
+        releaseHandler <- newEmptyMVar
+        releaseTarget <- newEmptyMVar
+        target <- actFinally (const (takeMVar releaseHandler))
+          (liftIO (takeMVar releaseTarget))
+
+        linked <- newEmptyMVar
+        recipientBlocker <- newEmptyMVar :: IO (MVar ())
+        recipientResult <- newEmptyMVar
+        _ <- actFinally (putMVar recipientResult) do
+          link target
+          liftIO (putMVar linked ())
+          liftIO (takeMVar recipientBlocker)
+
+        within "prompt-link registration" (takeMVar linked) `shouldReturn` ()
+        putMVar releaseTarget ()
+        _ <- within "prompt-link target transition" (awaitStopped target)
+        earlyResult <- timeout 1000000 (takeMVar recipientResult)
+        putMVar releaseHandler ()
+        case earlyResult of
+          Just outcome -> outcome `shouldSatisfy` isLinkKill
+          Nothing -> do
+            _ <- within "delayed link cleanup" (takeMVar recipientResult)
+            expectationFailure
+              "link delivery waited for the target completion handler"
 
       it "never loses a link racing target completion" do
         replicateM_ 200 do
@@ -424,12 +485,6 @@ main = hspec do
         actor <- act (pure ())
         _ <- within "target completion" (awaitStopped actor)
         atomically (withLivenessCheck addAfterEffect actor (const (pure ())))
-          `shouldThrow` isActorDead
-
-      it "doesn't let you send messages to dead actors" do
-        actor <- act (pure ())
-        _ <- within "target completion" (awaitStopped actor)
-        atomically (withLivenessCheck send actor "HEY")
           `shouldThrow` isActorDead
 
 within :: String -> IO a -> IO a

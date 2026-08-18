@@ -1,7 +1,1 @@
 packages: .
-
--- Pin the bounded-queue release until stm-queue-0.2.1.0 is on Hackage.
-source-repository-package
-  type: git
-  location: https://github.com/SamuelSchlesinger/stm-queue.git
-  tag: f00572556467996ca9907ad162a731ab77d4e7ac

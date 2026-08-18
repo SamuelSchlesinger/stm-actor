@@ -14,7 +14,7 @@ import Control.Monad.IO.Class (liftIO)
 main :: IO ()
 main = do
   logger <- act $ receive $ \message -> liftIO (putStrLn message)
-  atomically $ sendChecked logger "hello from an actor"
+  atomically $ send logger "hello from an actor"
   print =<< atomically (await logger)
 ```
 
@@ -26,48 +26,43 @@ with other threads and actors.
 
 `act` and `actFinally` create an unbounded FIFO mailbox. `actBounded capacity`
 and `actFinallyBounded capacity` instead create a bounded FIFO mailbox. Both
-are backed by `stm-queue`'s incremental-rotation real-time queue; bounded
-mailboxes add transactional occupancy accounting. Sending and checked
-lifecycle operations are STM transactions, so they can be combined atomically
-with application state. A committed send means that the actor was alive at
-that transaction's linearization point; it does not promise that the actor will
-eventually process the message.
+use `stm-queue`'s incremental-rotation real-time queue; bounded mailboxes add
+transactional occupancy accounting. Sending and lifecycle operations are STM
+transactions, so they can be combined atomically with application state. A
+committed `send` means that the actor was alive at that transaction's
+linearization point; it does not promise that the actor will eventually process
+the message.
 
 Here, “real-time” describes the queue algorithm's bounded structural work per
 operation. It is not a hard wall-clock scheduling guarantee from GHC or STM.
 
 A send to a full bounded mailbox retries, applying backpressure without
-blocking an operating-system thread and composing normally with `orElse`. For
-example, this attempts a capacity-aware send while still throwing `ActorDead`
-if the actor has stopped:
+blocking an operating-system thread and composing normally with `orElse`.
+When retrying is undesirable, `trySend` reports both capacity and lifecycle
+without blocking:
 
 ```haskell
-import Control.Concurrent.STM (atomically, orElse)
-
-atomically $
-  (sendChecked worker message >> pure True)
-    `orElse` pure False
+result <- atomically (trySend worker message)
+case result of
+  Sent -> messageAccepted
+  MailboxFull -> handleBackpressure
+  ActorStopped reason -> handleShutdown reason
 ```
 
 The capacity counts queued messages, not the message currently being handled.
-A capacity of zero admits no sends. Checked sends wake and reject when a full
-actor stops; an unchecked `send` retrying only on queue capacity does not, so
-prefer `sendChecked` or `trySend` when shutdown can race backpressure.
+A capacity of zero admits no sends. `send` and `sendChecked` wake and reject
+when a full actor stops.
 
 Choose the sending operation based on how the caller handles lifecycle races:
 
-| Operation | Result if the actor has already stopped |
-| --- | --- |
-| `send actor message` | Enqueues unchecked if capacity permits; the message cannot be processed |
-| `sendChecked actor message` | Throws `ActorDead` in STM |
-| `trySend actor message` | Returns `False` without enqueueing |
+| Operation | Actor already stopped | Live bounded mailbox full |
+| --- | --- | --- |
+| `send actor message` | Throws `ActorDead` | Retries |
+| `sendChecked actor message` | Throws `ActorDead` | Retries |
+| `trySend actor message` | Returns `ActorStopped` | Returns `MailboxFull` |
 
-The table describes an actor that has stopped. While a bounded actor is alive,
-all three operations retry when its mailbox is full; `trySend` is non-throwing
-with respect to actor lifecycle, not queue capacity. The unchecked operation
-avoids contention on the lifecycle `TVar`. Use it when the caller already owns
-the lifecycle, or when best-effort delivery is intentional. Prefer a checked
-variant when actor completion can race the send.
+`trySend` returns `Sent` after enqueueing and never retries because of capacity.
+Actor shutdown drains messages which were already queued.
 
 `receive` removes one message and then runs its handler. `receiveSTM` combines
 mailbox removal and a caller-supplied STM action in one transaction, so either
@@ -91,11 +86,12 @@ available:
 | `addAfterEffectChecked` | Throws `ActorDead` in STM |
 | `tryAddAfterEffect` | Returns `False` without registering |
 
-The completion handler passed to `actFinally` runs first, followed by registered
-after-effects in registration order. Every effect is attempted even if an
-earlier one throws; after draining the list, the first effect exception is
-re-thrown in the actor's terminating thread. Effects run sequentially, so a
-blocking effect delays later effects.
+After the lifecycle transition, queued messages are drained and link
+notifications are initiated. The completion handler passed to `actFinally`
+then runs, followed by registered after-effects in registration order. Every
+effect is attempted even if an earlier one throws; after draining the list, the
+first effect exception is re-thrown in the actor's terminating thread. User
+effects run sequentially, so a blocking effect delays later user effects.
 
 `await` returns after the actor's action result has been recorded and checked
 registration has closed. Completion handlers and after-effects may still be
@@ -105,9 +101,12 @@ running, and their failures do not change the recorded `Liveness` result.
 
 `link target`, called inside an actor, establishes a one-way link: when `target`
 stops normally or exceptionally, the calling actor receives `LinkKill`.
-`linkSTM recipient target` provides the same operation directly in STM. A late
-`linkSTM` throws `ActorDead` if either endpoint has already stopped; `link`
-translates a stopped-target race into an immediate `LinkKill`.
+Link delivery is initiated at the target's lifecycle transition, before its
+completion handler and user after-effects, so blocking cleanup does not postpone
+the notification. `linkSTM recipient target` provides the same operation
+directly in STM. A late `linkSTM` throws `ActorDead` if either endpoint has
+already stopped; `link` translates a stopped-target race into an immediate
+`LinkKill`.
 
 Link delivery happens in a helper thread. This prevents a recipient that masks
 asynchronous exceptions from blocking the target's completion effects. The

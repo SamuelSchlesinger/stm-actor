@@ -11,17 +11,27 @@
   deeply nested function chain.
 * Deliver link exceptions from a helper thread so a masked linked actor cannot
   block the dying actor's remaining after-effects.
-* Add `await`, `sendChecked`, `trySend`, `addAfterEffectChecked`, and
-  `tryAddAfterEffect` lifecycle operations.
+* Initiate link notifications before completion handlers and user after-effects,
+  so blocking target cleanup cannot postpone link delivery.
+* Make `send` lifecycle-safe so stopped actors cannot accumulate dead-letter
+  messages.
+* Make `trySend` genuinely non-blocking, with `Sent`, `MailboxFull`, and
+  `ActorStopped` results.
+* Drain queued messages during actor shutdown so a retained dead actor handle
+  does not retain its existing backlog.
+* Add `await`, `sendChecked`, `addAfterEffectChecked`, and `tryAddAfterEffect`
+  lifecycle operations.
 * Add opt-in bounded actor mailboxes with transactional backpressure through
   `actBounded` and `actFinallyBounded`.
-* Upgrade to `stm-queue-0.2.1` and use its incremental real-time queue for both
-  unbounded and bounded mailboxes.
+* Use `stm-queue`'s incremental real-time queue for unbounded and bounded
+  mailboxes while keeping compatibility with the published `stm-queue-0.2.0`.
 * Add deterministic lifecycle regression tests and bounded test waits.
 * Run the concurrency suite with multiple runtime capabilities.
 * Validate the oldest compatible dependency plan in CI.
 * Test modern GHC releases through GHC 9.14.1.
 * Repair the README example and package documentation metadata.
+* Rebuild the generated source distribution in CI outside the development
+  project so unpublished dependency pins cannot hide release failures.
 * Set GHC 9.6 (`base-4.18`) as the minimum supported toolchain.
 
 ## 0.3.1.1 -- 2024-12-05
