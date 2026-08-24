@@ -26,8 +26,9 @@ with other threads and actors.
 
 `act` and `actFinally` create an unbounded FIFO mailbox. `actBounded capacity`
 and `actFinallyBounded capacity` instead create a bounded FIFO mailbox. Both
-use `stm-queue`'s incremental-rotation real-time queue; bounded mailboxes add
-transactional occupancy accounting. Sending and lifecycle operations are STM
+use `stm-queue`'s incremental-rotation real-time queue; bounded mailboxes are
+its bounded queues, whose split read and write credits keep senders and the
+actor from contending on capacity accounting for every message. Sending and lifecycle operations are STM
 transactions, so they can be combined atomically with application state. A
 committed `send` means that the actor was alive at that transaction's
 linearization point; it does not promise that the actor will eventually process

@@ -24,7 +24,10 @@
 * Add opt-in bounded actor mailboxes with transactional backpressure through
   `actBounded` and `actFinallyBounded`.
 * Use `stm-queue`'s incremental real-time queue for unbounded and bounded
-  mailboxes while keeping compatibility with the published `stm-queue-0.2.0`.
+  mailboxes. Bounded mailboxes are `stm-queue-0.2.2`'s bounded queues, whose
+  split read and write credits let senders and the actor conflict on
+  capacity accounting once per `capacity` sends rather than on every message.
+* Require `stm-queue >= 0.2.2.0`.
 * Add deterministic lifecycle regression tests and bounded test waits.
 * Run the concurrency suite with multiple runtime capabilities.
 * Validate the oldest compatible dependency plan in CI.

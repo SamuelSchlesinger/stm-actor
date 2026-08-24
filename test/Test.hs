@@ -249,6 +249,28 @@ main = hspec do
             ("expected ActorStopped, got " <> show sendResult)
         atomically (send actor "second") `shouldThrow` isActorDead
 
+      it "delivers messages from many senders exactly once and in order" do
+        let senders = 8 :: Int
+            perSender = 500 :: Int
+        received <- newIORef []
+        drained <- newEmptyMVar
+        actor <- actBounded 4 do
+          replicateM_ (senders * perSender) $ receive \message ->
+            liftIO (atomicModifyIORef' received (\messages -> (message : messages, ())))
+          liftIO (putMVar drained ())
+        finished <- newEmptyMVar
+        forM_ [1 .. senders] \sender -> forkIO do
+          forM_ [1 .. perSender] \i -> atomically (send actor (sender, i))
+          putMVar finished ()
+        replicateM_ senders (within "sender completion" (takeMVar finished))
+        within "bounded fan-in drain" (takeMVar drained) `shouldReturn` ()
+        messages <- reverse <$> readIORef received
+        forM_ [1 .. senders] \sender ->
+          [i | (sender', i) <- messages, sender' == sender]
+            `shouldBe` [1 .. perSender]
+        _ <- within "fan-in actor completion" (awaitStopped actor)
+        pure ()
+
       it "wakes a blocked normal sender when the actor stops" do
         blocker <- newEmptyMVar
         actor <- actBounded 1 (liftIO (takeMVar blocker))

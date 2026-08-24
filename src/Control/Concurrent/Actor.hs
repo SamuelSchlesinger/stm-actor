@@ -73,9 +73,7 @@ import Control.Concurrent.STM
     ( STM
     , TVar
     , atomically
-    , check
     , modifyTVar'
-    , newTVar
     , newTVarIO
     , readTVar
     , retry
@@ -95,7 +93,8 @@ import Control.Monad.RWS.Class (MonadRWS)
 import Control.Monad.State.Class (MonadState)
 import Control.Monad.Trans (MonadTrans(..))
 import Control.Monad.Writer.Class (MonadWriter)
-import Data.Queue (dequeue, enqueue, flush, newQueue)
+import Data.Queue
+    (Queue, dequeue, enqueue, flush, newBoundedQueueIO, newQueueIO, tryEnqueue)
 import Data.Functor.Contravariant (Contravariant(contramap))
 import Numeric.Natural (Natural)
 
@@ -127,13 +126,6 @@ instance (MonadWriter w m, MonadReader r m, MonadState s m) => MonadRWS r w s (A
 data ActorContext message = ActorContext
   { receiveMessage :: STM message
   , actorHandle :: Actor message
-  }
-
-data Mailbox message = Mailbox
-  { readMailbox :: STM message
-  , writeMailbox :: message -> STM ()
-  , tryWriteMailbox :: message -> STM Bool
-  , clearMailbox :: STM ()
   }
 
 -- | A handle used to send messages, inspect lifecycle state, register
@@ -293,7 +285,7 @@ instance Contravariant Actor where
 -- result, drain its mailbox, initiate link notifications, run the supplied
 -- completion handler, and then drain all registered user after-effects.
 actFinally :: (Either SomeException a -> IO ()) -> ActionT message IO a -> IO (Actor message)
-actFinally = actFinallyWith newUnboundedMailbox
+actFinally = actFinallyWith newQueueIO
 
 -- | Like 'actFinally', but use a bounded FIFO mailbox with space for at most
 -- the given number of queued messages. Sends retry transactionally while the
@@ -301,89 +293,53 @@ actFinally = actFinallyWith newUnboundedMailbox
 -- therefore does not count against this capacity. A capacity of zero creates a
 -- mailbox to which no send can commit.
 --
+-- The mailbox is a bounded @stm-queue@ queue, which tracks free capacity as
+-- split read and write credits. Senders and the actor therefore conflict on
+-- capacity accounting once per @capacity@ sends rather than on every message.
+--
 -- @since 0.4.0.0
 actFinallyBounded
   :: Natural
   -> (Either SomeException a -> IO ())
   -> ActionT message IO a
   -> IO (Actor message)
-actFinallyBounded capacity = actFinallyWith (newBoundedMailbox capacity)
+actFinallyBounded capacity = actFinallyWith (newBoundedQueueIO capacity)
 
+-- The mailbox is an @stm-queue@ queue. Its unbounded and bounded variants
+-- share one type, so 'enqueue' retries only when a bounded mailbox is full,
+-- 'tryEnqueue' never retries, 'dequeue' releases bounded capacity, and 'flush'
+-- makes all capacity available again.
 actFinallyWith
-  :: STM (Mailbox message)
+  :: IO (Queue message)
   -> (Either SomeException a -> IO ())
   -> ActionT message IO a
   -> IO (Actor message)
 actFinallyWith newMailbox completionHandler (ActionT actionT) = do
   afterEffects <- newTVarIO []
   terminationEffects <- newTVarIO []
-  mailbox <- atomically newMailbox
+  mailbox <- newMailbox
   stateVar <- newTVarIO Running
   let registerEffect afterEffect = modifyTVar' afterEffects (afterEffect :)
       registerTerminationEffect afterEffect =
         modifyTVar' terminationEffects (afterEffect :)
-      enqueueMessage = writeMailbox mailbox
-      tryEnqueueMessage = tryWriteMailbox mailbox
       makeActor actorThread = Actor
         { addAfterEffect' = registerEffect
         , addTerminationEffect' = registerTerminationEffect
         , threadId' = actorThread
-        , send' = enqueueMessage
-        , trySend' = tryEnqueueMessage
+        , send' = enqueue mailbox
+        , trySend' = tryEnqueue mailbox
         , actorState = stateVar
         }
   actorThread <- forkFinally
     (do
       currentThread <- myThreadId
-      actionT (ActorContext (readMailbox mailbox) (makeActor currentThread)))
+      actionT (ActorContext (dequeue mailbox) (makeActor currentThread)))
     (finishActor stateVar mailbox terminationEffects afterEffects completionHandler)
   pure (makeActor actorThread)
 
-newUnboundedMailbox :: STM (Mailbox message)
-newUnboundedMailbox = do
-  queue <- newQueue
-  pure Mailbox
-    { readMailbox = dequeue queue
-    , writeMailbox = enqueue queue
-    , tryWriteMailbox = \message -> enqueue queue message >> pure True
-    , clearMailbox = void (flush queue)
-    }
-
-newBoundedMailbox :: Natural -> STM (Mailbox message)
-newBoundedMailbox capacity = do
-  queue <- newQueue
-  size <- newTVar 0
-  let reserveSlot = do
-        current <- readTVar size
-        check (current < capacity)
-        writeTVar size $! current + 1
-      tryReserveSlot = do
-        current <- readTVar size
-        if current < capacity
-          then do
-            writeTVar size $! current + 1
-            pure True
-          else pure False
-      releaseSlot = modifyTVar' size (subtract 1)
-      readMessage = do
-        message <- dequeue queue
-        releaseSlot
-        pure message
-      writeMessage message = reserveSlot >> enqueue queue message
-      tryWriteMessage message = tryReserveSlot >>= \case
-        True -> enqueue queue message >> pure True
-        False -> pure False
-      clear = void (flush queue) >> writeTVar size 0
-  pure Mailbox
-    { readMailbox = readMessage
-    , writeMailbox = writeMessage
-    , tryWriteMailbox = tryWriteMessage
-    , clearMailbox = clear
-    }
-
 finishActor
   :: TVar ActorState
-  -> Mailbox message
+  -> Queue message
   -> TVar [AfterEffect]
   -> TVar [AfterEffect]
   -> (Either SomeException a -> IO ())
@@ -392,7 +348,7 @@ finishActor
 finishActor stateVar mailbox terminationEffects afterEffects completionHandler result = do
   (earlyEffects, effects) <- atomically do
     writeTVar stateVar (Stopped completion)
-    clearMailbox mailbox
+    void (flush mailbox)
     registeredEarly <- readTVar terminationEffects
     registered <- readTVar afterEffects
     writeTVar terminationEffects []
