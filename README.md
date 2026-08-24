@@ -25,8 +25,10 @@ with other threads and actors.
 ## Mailboxes and sending
 
 `act` and `actFinally` create an unbounded FIFO mailbox. `actBounded capacity`
-and `actFinallyBounded capacity` instead create a bounded FIFO mailbox. Both
-use `stm-queue`'s incremental-rotation real-time queue; bounded mailboxes are
+and `actFinallyBounded capacity` instead create a bounded FIFO mailbox. All
+four are specialisations of `actWith`, which takes an `ActorConfig` describing
+the mailbox capacity and the handlers run when the actor stops. Both kinds of
+mailbox use `stm-queue`'s incremental-rotation real-time queue; bounded mailboxes are
 its bounded queues, whose split read and write credits keep senders and the
 actor from contending on capacity accounting for every message. Sending and lifecycle operations are STM
 transactions, so they can be combined atomically with application state. A
@@ -63,7 +65,19 @@ Choose the sending operation based on how the caller handles lifecycle races:
 | `trySend actor message` | Returns `ActorStopped` | Returns `MailboxFull` |
 
 `trySend` returns `Sent` after enqueueing and never retries because of capacity.
-Actor shutdown drains messages which were already queued.
+Actor shutdown drains messages which were already queued and hands them, in
+mailbox order, to the `onUndelivered` handler of the actor's `ActorConfig`:
+
+```haskell
+worker <- actWith defaultActorConfig
+  { mailboxCapacity = Just 256
+  , onUndelivered = mapM_ requeueElsewhere
+  }
+  workerLoop
+```
+
+Every committed `send` therefore either reaches a `receive` handler or reaches
+`onUndelivered`; the default handler discards the messages.
 
 `receive` removes one message and then runs its handler. `receiveSTM` combines
 mailbox removal and a caller-supplied STM action in one transaction, so either
@@ -76,29 +90,32 @@ An actor transitions exactly once from `Alive` to either `Completed` or
 `await` retries in STM until the action has stopped, so it composes with other
 transactions without polling.
 
-The transition also closes checked after-effect registration. A registration
-racing completion is therefore either committed and later run, or rejected;
-it is never silently lost. As with sending, three registration modes are
-available:
+The transition also closes after-effect registration. A registration racing
+completion is therefore either committed and later run, or rejected; it is
+never silently lost. As with sending, three registration modes are available:
 
 | Operation | Result if the actor has already stopped |
 | --- | --- |
-| `addAfterEffect` | Registers unchecked; the effect cannot run |
-| `addAfterEffectChecked` | Throws `ActorDead` in STM |
+| `addAfterEffect` | Throws `ActorDead` in STM |
 | `tryAddAfterEffect` | Returns `False` without registering |
+| `addAfterEffectUnchecked` | Registers without checking; the effect cannot run |
 
-After the lifecycle transition, queued messages are drained and link
-notifications are initiated. The completion handler passed to `actFinally`
-then runs, followed by registered after-effects in registration order. Every
-effect is attempted even if an earlier one throws; after draining the list, the
-first effect exception is re-thrown in the actor's terminating thread. User
-effects run sequentially, so a blocking effect delays later user effects.
+After the lifecycle transition, queued messages are drained and link and
+monitor notifications are initiated. The completion handler then runs, followed
+by `onUndelivered` if any messages were queued, and then registered
+after-effects in registration order. Every effect is attempted even if an
+earlier one throws: each failure is passed to the `onEffectFailure` handler,
+which by default rethrows, so after draining the list the first exception is
+re-thrown in the actor's terminating thread. Supply a logging handler to keep
+effect failures out of the default uncaught-exception output. User effects run
+sequentially, so a blocking effect delays later user effects.
 
-`await` returns after the actor's action result has been recorded and checked
+`await` returns after the actor's action result has been recorded and
 registration has closed. Completion handlers and after-effects may still be
-running, and their failures do not change the recorded `Liveness` result.
+running, and their failures do not change the recorded `Liveness` result;
+`awaitEffects` additionally waits until every effect has finished.
 
-## Links and cancellation
+## Links, monitors, and cancellation
 
 `link target`, called inside an actor, establishes a one-way link: when `target`
 stops normally or exceptionally, the calling actor receives `LinkKill`.
@@ -114,9 +131,37 @@ asynchronous exceptions from blocking the target's completion effects. The
 helper itself can remain blocked while the recipient uses
 `uninterruptibleMask`.
 
+Links interrupt the recipient, which suits cancellation. To be told that an
+actor stopped without being interrupted, use a monitor. `monitor target
+toMessage`, called inside an actor, sends `toMessage completion` to the calling
+actor's own mailbox when `target` stops, where `completion` is `Nothing` for
+normal completion or `Just` the exception. The notification is handled like any
+other message, in mailbox order:
+
+```haskell
+data Message = Work Job | WorkerDown ThreadId (Maybe SomeException)
+
+supervisor worker = do
+  monitor worker (WorkerDown (threadId worker))
+  receive $ \case
+    Work job -> ...
+    WorkerDown who reason -> ...
+```
+
+Monitoring an actor that has already stopped delivers the message immediately.
+`monitorSTM recipient target toMessage` is the same operation in STM.
+
 `murder` requests cancellation by synchronously using `throwTo` with a
 `MurderKill` exception. Like any synchronous `throwTo`, it can block while the
-target is uninterruptibly masking asynchronous exceptions.
+target is uninterruptibly masking asynchronous exceptions. Once the actor has
+stopped, `murder` does nothing, so completion effects are not interrupted.
+
+An actor blocked in `receive` whose mailbox is no longer reachable from any
+other thread can never receive another message. The runtime detects this at
+the next major garbage collection and throws `BlockedIndefinitelyOnSTM` to the
+actor, which stops with `ThrewException` and runs its links, monitors, and
+completion effects like any other failure. Dropping every handle to an actor
+therefore reclaims it, but the failure cascades through links.
 
 ## Scope and compatibility
 

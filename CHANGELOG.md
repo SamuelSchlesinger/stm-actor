@@ -1,6 +1,26 @@
 # Revision history for stm-actor
 
-## 0.4.0.0 -- UNRELEASED
+## 0.4.0.0 -- 2026-08-23
+
+* Add `actWith` and `ActorConfig`, which configure the mailbox capacity, the
+  completion handler, an `onUndelivered` handler that receives the messages
+  still queued when the actor stopped, and an `onEffectFailure` handler that
+  is called for each completion effect that throws. `act`, `actBounded`,
+  `actFinally`, and `actFinallyBounded` are specialisations.
+* Make `addAfterEffect` lifecycle-checked by default, matching `send`; the
+  previous unchecked behaviour is available as `addAfterEffectUnchecked`, and
+  `addAfterEffectChecked` remains as an alias.
+* Add `monitor` and `monitorSTM`, which deliver an actor's completion to the
+  monitoring actor's mailbox as an ordinary message instead of an asynchronous
+  exception. Monitoring an actor that has already stopped delivers the message
+  immediately.
+* Add `awaitEffects`, which waits until the completion handler and
+  after-effects have finished running.
+* Make `murder` a no-op once the actor has stopped, so completion effects are
+  not interrupted.
+* Document that an actor blocked in `receive` whose handles have all been
+  dropped is stopped by the runtime with `BlockedIndefinitelyOnSTM`.
+* Add a fan-in throughput benchmark comparing unbounded and bounded mailboxes.
 
 * Make linking to an already-stopped actor fail reliably rather than silently
   installing an after-effect that can never run.
