@@ -28,9 +28,9 @@ with other threads and actors.
 and `actFinallyBounded capacity` instead create a bounded FIFO mailbox. All
 four are specialisations of `actWith`, which takes an `ActorConfig` describing
 the mailbox capacity and the handlers run when the actor stops. Both kinds of
-mailbox use `stm-queue`'s incremental-rotation real-time queue; bounded mailboxes are
-its bounded queues, whose split read and write credits keep senders and the
-actor from contending on capacity accounting for every message. Sending and lifecycle operations are STM
+mailbox use `stm-queue`'s incremental-rotation real-time queue. Bounded mailboxes
+add transactional occupancy accounting, keeping compatibility with the
+published `stm-queue-0.2.0.0`. Sending and lifecycle operations are STM
 transactions, so they can be combined atomically with application state. A
 committed `send` means that the actor was alive at that transaction's
 linearization point; it does not promise that the actor will eventually process
@@ -76,8 +76,9 @@ worker <- actWith defaultActorConfig
   workerLoop
 ```
 
-Every committed `send` therefore either reaches a `receive` handler or reaches
-`onUndelivered`; the default handler discards the messages.
+The default handler discards these messages. Messages already dequeued are not
+included, even if cancellation interrupts the actor before or during their
+handler. Applications that require processing guarantees need acknowledgements.
 
 `receive` removes one message and then runs its handler. `receiveSTM` combines
 mailbox removal and a caller-supplied STM action in one transaction, so either
@@ -100,8 +101,8 @@ never silently lost. As with sending, three registration modes are available:
 | `tryAddAfterEffect` | Returns `False` without registering |
 | `addAfterEffectUnchecked` | Registers without checking; the effect cannot run |
 
-After the lifecycle transition, queued messages are drained and link and
-monitor notifications are initiated. The completion handler then runs, followed
+After the lifecycle transition, queued messages are drained and link
+notifications are initiated. The completion handler then runs, followed
 by `onUndelivered` if any messages were queued, and then registered
 after-effects in registration order. Every effect is attempted even if an
 earlier one throws: each failure is passed to the `onEffectFailure` handler,
@@ -115,7 +116,7 @@ registration has closed. Completion handlers and after-effects may still be
 running, and their failures do not change the recorded `Liveness` result;
 `awaitEffects` additionally waits until every effect has finished.
 
-## Links, monitors, and cancellation
+## Links and cancellation
 
 `link target`, called inside an actor, establishes a one-way link: when `target`
 stops normally or exceptionally, the calling actor receives `LinkKill`.
@@ -131,25 +132,8 @@ asynchronous exceptions from blocking the target's completion effects. The
 helper itself can remain blocked while the recipient uses
 `uninterruptibleMask`.
 
-Links interrupt the recipient, which suits cancellation. To be told that an
-actor stopped without being interrupted, use a monitor. `monitor target
-toMessage`, called inside an actor, sends `toMessage completion` to the calling
-actor's own mailbox when `target` stops, where `completion` is `Nothing` for
-normal completion or `Just` the exception. The notification is handled like any
-other message, in mailbox order:
-
-```haskell
-data Message = Work Job | WorkerDown ThreadId (Maybe SomeException)
-
-supervisor worker = do
-  monitor worker (WorkerDown (threadId worker))
-  receive $ \case
-    Work job -> ...
-    WorkerDown who reason -> ...
-```
-
-Monitoring an actor that has already stopped delivers the message immediately.
-`monitorSTM recipient target toMessage` is the same operation in STM.
+Links interrupt the recipient, which suits cancellation. Use `await` to
+observe an actor's completion in STM without interrupting another actor.
 
 `murder` requests cancellation by synchronously using `throwTo` with a
 `MurderKill` exception. Like any synchronous `throwTo`, it can block while the
@@ -159,7 +143,7 @@ stopped, `murder` does nothing, so completion effects are not interrupted.
 An actor blocked in `receive` whose mailbox is no longer reachable from any
 other thread can never receive another message. The runtime detects this at
 the next major garbage collection and throws `BlockedIndefinitelyOnSTM` to the
-actor, which stops with `ThrewException` and runs its links, monitors, and
+actor, which stops with `ThrewException` and runs its links and
 completion effects like any other failure. Dropping every handle to an actor
 therefore reclaims it, but the failure cascades through links.
 
@@ -174,6 +158,24 @@ The supported compiler range is GHC 9.6 through GHC 9.14. The CI matrix builds
 with warnings treated as errors, runs the tests with two runtime capabilities,
 validates the oldest compatible dependency plan, and checks Haddock and the
 source distribution on the newest compiler.
+
+### Upgrading from 0.3.1.1
+
+Version 0.4 retains the existing function signatures but changes lifecycle
+behavior. It also raises the minimum compiler version to GHC 9.6.
+
+- `send` and `addAfterEffect` now throw `ActorDead` when the actor has stopped.
+  Use `trySend` and `tryAddAfterEffect` when shutdown is an expected outcome.
+  `addAfterEffectUnchecked` retains the old registration behavior, including
+  retaining an effect that cannot run if registered after completion.
+- Linking to a stopped actor now fails promptly. Link notifications begin
+  before completion handlers and user after-effects; do not rely on cleanup
+  finishing before a linked actor is interrupted.
+- All registered after-effects are attempted even if an earlier effect throws.
+  They still run in registration order. Use `onEffectFailure` to handle errors.
+- `murder` does nothing after the actor's action has stopped. Use `awaitEffects`
+  to wait for cleanup; `await` and `livenessCheck` only observe the action's
+  result. Neither message admission nor cleanup provides exactly-once processing.
 
 For local development:
 

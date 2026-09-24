@@ -1,8 +1,0 @@
-packages: .
-
--- stm-queue-0.2.2.0 is not yet on Hackage. Remove this pin once it is
--- published; the sdist and oldest-dependency CI jobs will fail until then.
-source-repository-package
-  type: git
-  location: https://github.com/SamuelSchlesinger/stm-queue.git
-  tag: b1c8f5653a03c93a3243cf7c93aa9c67e3d6a836

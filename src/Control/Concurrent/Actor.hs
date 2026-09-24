@@ -25,9 +25,9 @@ handler in the actor's thread.
 An actor has a single lifecycle transition from alive to stopped. The
 transition records whether its action completed normally or threw, atomically
 closes sends and after-effect registration, and drains queued messages.
-'await' observes that transition without polling. Link and monitor
-notifications are initiated next. The completion handler, the undelivered
-message handler, and registered user after-effects then run in the actor's
+'await' observes that transition without polling. Link notifications are
+initiated next. The completion handler, the undelivered message handler, and
+registered user after-effects then run in the actor's
 terminating thread, with every effect attempted in registration order;
 'awaitEffects' observes their completion.
 
@@ -40,11 +40,10 @@ it only when the caller already controls the actor lifecycle.
 An actor blocked in 'receive' whose mailbox is reachable from no other thread
 can never receive another message. The runtime system detects this at the next
 major garbage collection and throws 'Control.Exception.BlockedIndefinitelyOnSTM'
-to the actor, which then stops with 'ThrewException' and runs its links,
-monitors, and completion effects like any other failure. Dropping every t'Actor'
+to the actor, which then stops with 'ThrewException' and runs its links and
+completion effects like any other failure. Dropping every t'Actor'
 handle therefore reclaims the actor, but the failure cascades through links.
-Note that an after-effect or monitor which captures the handle keeps the actor
-alive.
+Note that an after-effect which captures the handle keeps the actor alive.
 -}
 module Control.Concurrent.Actor
 ( ActionT
@@ -80,12 +79,10 @@ module Control.Concurrent.Actor
 , addAfterEffectUnchecked
 , tryAddAfterEffect
 , withLivenessCheck
-  -- * Links and monitors
+  -- * Links
 , link
 , linkSTM
 , LinkKill(..)
-, monitor
-, monitorSTM
   -- * Cancellation
 , murder
 , MurderKill(..)
@@ -100,6 +97,7 @@ import Control.Concurrent.STM
     , atomically
     , check
     , modifyTVar'
+    , newTVar
     , newTVarIO
     , readTVar
     , retry
@@ -108,7 +106,6 @@ import Control.Concurrent.STM
     )
 import Control.Exception
     (Exception, SomeException, catch, finally, mask_, throwIO, try)
-import Control.Monad (void)
 import Control.Monad.Cont.Class (MonadCont)
 import Control.Monad.Error.Class (MonadError)
 import Control.Monad.IO.Class (MonadIO(..))
@@ -119,8 +116,7 @@ import Control.Monad.RWS.Class (MonadRWS)
 import Control.Monad.State.Class (MonadState)
 import Control.Monad.Trans (MonadTrans(..))
 import Control.Monad.Writer.Class (MonadWriter)
-import Data.Queue
-    (Queue, dequeue, enqueue, flush, newBoundedQueueIO, newQueueIO, tryEnqueue)
+import Data.Queue (dequeue, enqueue, flush, newQueue)
 import Data.Functor.Contravariant (Contravariant(contramap))
 import Numeric.Natural (Natural)
 
@@ -152,6 +148,13 @@ instance (MonadWriter w m, MonadReader r m, MonadState s m) => MonadRWS r w s (A
 data ActorContext message = ActorContext
   { receiveMessage :: STM message
   , actorHandle :: Actor message
+  }
+
+data Mailbox message = Mailbox
+  { readMailbox :: STM message
+  , writeMailbox :: message -> STM ()
+  , tryWriteMailbox :: message -> STM Bool
+  , drainMailbox :: STM [message]
   }
 
 -- | A handle used to send messages, inspect lifecycle state, register
@@ -234,7 +237,7 @@ ensureAlive actor = readTVar (actorState actor) >>= \case
 -- | Register an effect to run once the t'Actor' stops. All registered effects
 -- run in registration order, after the completion handler; later effects are
 -- still attempted if an earlier effect throws. This is how you can implement
--- your own functions like 'link', 'linkSTM', or 'monitorSTM'.
+-- your own completion callbacks.
 --
 -- If the actor has already stopped, throw t'ActorDead'. The liveness check
 -- and registration are one STM transaction, so actor completion cannot race
@@ -342,13 +345,13 @@ data ActorConfig message a = ActorConfig
     -- mailbox to which no send can commit.
   , onCompletion :: Either SomeException a -> IO ()
     -- ^ Run in the actor's terminating thread with the result of its action,
-    -- after link and monitor notifications have been initiated and before the
+    -- after link notifications have been initiated and before the
     -- undelivered message handler and user after-effects.
   , onUndelivered :: [message] -> IO ()
     -- ^ Run after 'onCompletion' with the messages which were still queued when
     -- the actor stopped, in mailbox order. It is not called when no messages
-    -- were queued. Every committed 'send' either reaches a handler or reaches
-    -- this function.
+    -- were queued. Messages already dequeued are not included, even if their
+    -- handler is subsequently interrupted.
   , onEffectFailure :: SomeException -> IO ()
     -- ^ Called in the actor's terminating thread for each completion effect
     -- that throws, with that exception, before the remaining effects run. The
@@ -369,7 +372,7 @@ defaultActorConfig = ActorConfig
   }
 
 -- | Perform some t'ActionT' in a new thread. Once the action stops, record its
--- result, drain its mailbox, initiate link and monitor notifications, run the
+-- result, drain its mailbox, initiate link notifications, run the
 -- supplied completion handler, and then drain all registered user
 -- after-effects.
 actFinally :: (Either SomeException a -> IO ()) -> ActionT message IO a -> IO (Actor message)
@@ -382,9 +385,7 @@ actFinally completionHandler =
 -- therefore does not count against this capacity. A capacity of zero creates a
 -- mailbox to which no send can commit.
 --
--- The mailbox is a bounded @stm-queue@ queue, which tracks free capacity as
--- split read and write credits. Senders and the actor therefore conflict on
--- capacity accounting once per @capacity@ sends rather than on every message.
+-- The mailbox uses an @stm-queue@ queue with transactional capacity accounting.
 --
 -- @since 0.4.0.0
 actFinallyBounded
@@ -412,17 +413,17 @@ actBounded capacity = actWith defaultActorConfig { mailboxCapacity = Just capaci
 -- | Perform some t'ActionT' in a new thread, configured by an t'ActorConfig'.
 -- The other creation functions are specialisations of this one.
 --
--- The mailbox is an @stm-queue@ queue. Its unbounded and bounded variants
--- share one type, so 'send' retries only when a bounded mailbox is full,
--- 'trySend' never retries, receiving releases bounded capacity, and shutdown
--- makes all capacity available again.
+-- Mailboxes use @stm-queue@ with optional transactional capacity accounting.
+-- 'send' retries only when a bounded mailbox is full, 'trySend' never retries,
+-- receiving releases bounded capacity, and shutdown drains queued messages.
 --
 -- @since 0.4.0.0
 actWith :: ActorConfig message a -> ActionT message IO a -> IO (Actor message)
 actWith config (ActionT actionT) = do
   afterEffects <- newTVarIO []
   terminationEffects <- newTVarIO []
-  mailbox <- maybe newQueueIO newBoundedQueueIO (mailboxCapacity config)
+  mailbox <- atomically $
+    maybe newUnboundedMailbox newBoundedMailbox (mailboxCapacity config)
   stateVar <- newTVarIO Running
   finishedVar <- newTVarIO False
   let makeActor actorThread = Actor
@@ -430,23 +431,67 @@ actWith config (ActionT actionT) = do
         , addTerminationEffect' = \afterEffect ->
             modifyTVar' terminationEffects (afterEffect :)
         , threadId' = actorThread
-        , send' = enqueue mailbox
-        , trySend' = tryEnqueue mailbox
+        , send' = writeMailbox mailbox
+        , trySend' = tryWriteMailbox mailbox
         , actorState = stateVar
         , effectsFinished = finishedVar
         }
   actorThread <- forkFinally
     (do
       currentThread <- myThreadId
-      actionT (ActorContext (dequeue mailbox) (makeActor currentThread)))
+      actionT (ActorContext (readMailbox mailbox) (makeActor currentThread)))
     (finishActor config stateVar finishedVar mailbox terminationEffects afterEffects)
   pure (makeActor actorThread)
+
+newUnboundedMailbox :: STM (Mailbox message)
+newUnboundedMailbox = do
+  queue <- newQueue
+  pure Mailbox
+    { readMailbox = dequeue queue
+    , writeMailbox = enqueue queue
+    , tryWriteMailbox = \message -> enqueue queue message >> pure True
+    , drainMailbox = flush queue
+    }
+
+newBoundedMailbox :: Natural -> STM (Mailbox message)
+newBoundedMailbox capacity = do
+  queue <- newQueue
+  size <- newTVar 0
+  let reserveSlot = do
+        current <- readTVar size
+        check (current < capacity)
+        writeTVar size $! current + 1
+      tryReserveSlot = do
+        current <- readTVar size
+        if current < capacity
+          then do
+            writeTVar size $! current + 1
+            pure True
+          else pure False
+      readMessage = do
+        message <- dequeue queue
+        modifyTVar' size (subtract 1)
+        pure message
+      writeMessage message = reserveSlot >> enqueue queue message
+      tryWriteMessage message = tryReserveSlot >>= \case
+        True -> enqueue queue message >> pure True
+        False -> pure False
+      drain = do
+        messages <- flush queue
+        writeTVar size 0
+        pure messages
+  pure Mailbox
+    { readMailbox = readMessage
+    , writeMailbox = writeMessage
+    , tryWriteMailbox = tryWriteMessage
+    , drainMailbox = drain
+    }
 
 finishActor
   :: ActorConfig message a
   -> TVar ActorState
   -> TVar Bool
-  -> Queue message
+  -> Mailbox message
   -> TVar [AfterEffect]
   -> TVar [AfterEffect]
   -> Either SomeException a
@@ -454,7 +499,7 @@ finishActor
 finishActor config stateVar finishedVar mailbox terminationEffects afterEffects result = do
   (earlyEffects, effects, undelivered) <- atomically do
     writeTVar stateVar (Stopped completion)
-    undelivered <- flush mailbox
+    undelivered <- drainMailbox mailbox
     registeredEarly <- readTVar terminationEffects
     registered <- readTVar afterEffects
     writeTVar terminationEffects []
@@ -515,8 +560,7 @@ instance Exception LinkKill
 -- exception to us with its 'ThreadId' attached. Linking to an actor that has
 -- already stopped throws the same t'LinkKill' immediately.
 --
--- Links are for cancellation. To be told that an actor stopped without being
--- interrupted, use 'monitor'.
+-- Links are for cancellation. Use 'await' to observe completion in STM.
 link :: MonadIO m => Actor message -> ActionT message' m ()
 link you = do
   me <- self
@@ -543,51 +587,6 @@ signalLink :: Actor message -> Actor message' -> IO ()
 signalLink alice bob = do
   _ <- forkIO $ throwTo (threadId alice) (LinkKill (threadId bob))
   pure ()
-
--- | Monitor the given actor from this one. When it stops, whether normally or
--- exceptionally, the message built from its completion is sent to our mailbox,
--- so it is handled like any other message rather than interrupting us. If the
--- given actor has already stopped, the message is sent immediately.
---
--- @since 0.4.0.0
-monitor
-  :: MonadIO m
-  => Actor message'
-  -> (Maybe SomeException -> message)
-  -> ActionT message m ()
-monitor target toMessage = do
-  me <- self
-  liftIO (atomically (monitorSTM me target toMessage))
-
--- | Make the first actor monitor the second. When the second actor stops, the
--- message built from its completion ('Nothing' for normal completion, 'Just'
--- the exception otherwise) is sent to the first actor. If the second actor has
--- already stopped, the message is sent in this transaction, retrying like
--- 'send' if the first actor's bounded mailbox is full. If the first actor has
--- already stopped, throw t'ActorDead'.
---
--- Like links, monitor notifications are initiated at the second actor's
--- lifecycle transition, before its completion handler and after-effects, and
--- are delivered from a helper thread which waits for mailbox capacity. A
--- notification to a first actor which has since stopped is dropped.
---
--- @since 0.4.0.0
-monitorSTM
-  :: Actor message
-  -> Actor message'
-  -> (Maybe SomeException -> message)
-  -> STM ()
-monitorSTM recipient target toMessage = do
-  ensureAlive recipient
-  readTVar (actorState target) >>= \case
-    Stopped completion -> send' recipient (toMessage completion)
-    Running -> addTerminationEffect' target \completion ->
-      signalMonitor recipient (toMessage completion)
-
-signalMonitor :: Actor message -> message -> IO ()
-signalMonitor recipient message = void $ forkIO $
-  atomically (send recipient message)
-    `catch` \(ActorDead _) -> pure ()
 
 -- | Returns the t'Actor' handle of the actor executing this action.
 self :: Applicative m => ActionT message m (Actor message)

@@ -505,58 +505,6 @@ main = hspec do
         _ <- within "link target cleanup" (awaitStopped target)
         pure ()
 
-    describe "monitor" do
-      it "delivers a message when the target completes normally" do
-        releaseTarget <- newEmptyMVar
-        result <- newEmptyMVar
-        target <- act (liftIO (takeMVar releaseTarget))
-        _ <- act do
-          monitor target TargetDown
-          receive \(TargetDown completion) -> liftIO (putMVar result completion)
-        putMVar releaseTarget ()
-        within "normal monitor notification" (takeMVar result) >>= \case
-          Nothing -> pure ()
-          Just exception -> expectationFailure
-            ("expected normal completion, got " <> show exception)
-
-      it "delivers the exception when the target fails" do
-        releaseTarget <- newEmptyMVar
-        result <- newEmptyMVar
-        target <- act do
-          liftIO (takeMVar releaseTarget)
-          liftIO (throwIO Underflow)
-        _ <- act do
-          monitor target TargetDown
-          receive \(TargetDown completion) -> liftIO (putMVar result completion)
-        putMVar releaseTarget ()
-        within "failure monitor notification" (takeMVar result) >>= \case
-          Just exception | isUnderflowException exception -> pure ()
-          completion -> expectationFailure
-            ("expected Underflow, got " <> show completion)
-
-      it "notifies immediately about an already-stopped target" do
-        target <- act (pure ())
-        _ <- within "target completion" (awaitStopped target)
-        result <- newEmptyMVar
-        _ <- act do
-          monitor target TargetDown
-          receive \(TargetDown completion) -> liftIO (putMVar result completion)
-        within "late monitor notification" (takeMVar result) >>= \case
-          Nothing -> pure ()
-          Just exception -> expectationFailure
-            ("expected normal completion, got " <> show exception)
-
-      it "rejects a stopped recipient and drops notifications to one" do
-        recipient <- act (pure ())
-        _ <- within "recipient completion" (awaitStopped recipient)
-        targetBlocker <- newEmptyMVar
-        target <- act (liftIO (takeMVar targetBlocker))
-        atomically (monitorSTM recipient target TargetDown)
-          `shouldThrow` isActorDead
-        murder target
-        _ <- within "monitor target cleanup" (awaitStopped target)
-        pure ()
-
     describe "self" do
       it "returns the actor's real handle" do
         result <- newEmptyMVar
@@ -643,8 +591,6 @@ main = hspec do
         _ <- within "target completion" (awaitStopped actor)
         atomically (withLivenessCheck addAfterEffectUnchecked actor (const (pure ())))
           `shouldThrow` isActorDead
-
-newtype TargetDown = TargetDown (Maybe SomeException)
 
 within :: String -> IO a -> IO a
 within label action = timeout 5000000 action >>= \case

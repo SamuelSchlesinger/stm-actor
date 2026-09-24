@@ -1,6 +1,6 @@
 # Revision history for stm-actor
 
-## 0.4.0.0 -- 2026-08-23
+## 0.4.0.0 -- UNRELEASED
 
 * Add `actWith` and `ActorConfig`, which configure the mailbox capacity, the
   completion handler, an `onUndelivered` handler that receives the messages
@@ -10,10 +10,6 @@
 * Make `addAfterEffect` lifecycle-checked by default, matching `send`; the
   previous unchecked behaviour is available as `addAfterEffectUnchecked`, and
   `addAfterEffectChecked` remains as an alias.
-* Add `monitor` and `monitorSTM`, which deliver an actor's completion to the
-  monitoring actor's mailbox as an ordinary message instead of an asynchronous
-  exception. Monitoring an actor that has already stopped delivers the message
-  immediately.
 * Add `awaitEffects`, which waits until the completion handler and
   after-effects have finished running.
 * Make `murder` a no-op once the actor has stopped, so completion effects are
@@ -44,10 +40,7 @@
 * Add opt-in bounded actor mailboxes with transactional backpressure through
   `actBounded` and `actFinallyBounded`.
 * Use `stm-queue`'s incremental real-time queue for unbounded and bounded
-  mailboxes. Bounded mailboxes are `stm-queue-0.2.2`'s bounded queues, whose
-  split read and write credits let senders and the actor conflict on
-  capacity accounting once per `capacity` sends rather than on every message.
-* Require `stm-queue >= 0.2.2.0`.
+  mailboxes while keeping compatibility with the published `stm-queue-0.2.0.0`.
 * Add deterministic lifecycle regression tests and bounded test waits.
 * Run the concurrency suite with multiple runtime capabilities.
 * Validate the oldest compatible dependency plan in CI.
