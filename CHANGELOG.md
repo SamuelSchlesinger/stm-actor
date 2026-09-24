@@ -2,6 +2,22 @@
 
 ## 0.4.0.0 -- UNRELEASED
 
+* Add `actWith` and `ActorConfig`, which configure the mailbox capacity, the
+  completion handler, an `onUndelivered` handler that receives the messages
+  still queued when the actor stopped, and an `onEffectFailure` handler that
+  is called for each completion effect that throws. `act`, `actBounded`,
+  `actFinally`, and `actFinallyBounded` are specialisations.
+* Make `addAfterEffect` lifecycle-checked by default, matching `send`; the
+  previous unchecked behaviour is available as `addAfterEffectUnchecked`, and
+  `addAfterEffectChecked` remains as an alias.
+* Add `awaitEffects`, which waits until the completion handler and
+  after-effects have finished running.
+* Make `murder` a no-op once the actor has stopped, so completion effects are
+  not interrupted.
+* Document that an actor blocked in `receive` whose handles have all been
+  dropped is stopped by the runtime with `BlockedIndefinitelyOnSTM`.
+* Add a fan-in throughput benchmark comparing unbounded and bounded mailboxes.
+
 * Make linking to an already-stopped actor fail reliably rather than silently
   installing an after-effect that can never run.
 * Reject `linkSTM` when either endpoint is already stopped.
@@ -24,7 +40,7 @@
 * Add opt-in bounded actor mailboxes with transactional backpressure through
   `actBounded` and `actFinallyBounded`.
 * Use `stm-queue`'s incremental real-time queue for unbounded and bounded
-  mailboxes while keeping compatibility with the published `stm-queue-0.2.0`.
+  mailboxes while keeping compatibility with the published `stm-queue-0.2.0.0`.
 * Add deterministic lifecycle regression tests and bounded test waits.
 * Run the concurrency suite with multiple runtime capabilities.
 * Validate the oldest compatible dependency plan in CI.

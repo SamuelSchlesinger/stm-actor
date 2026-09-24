@@ -1,5 +1,6 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
 import Control.Concurrent (forkIO)
@@ -11,6 +12,7 @@ import Control.Concurrent.STM
 import Control.Exception
     ( ArithException(Underflow)
     , AsyncException(ThreadKilled)
+    , BlockedIndefinitelyOnSTM(BlockedIndefinitelyOnSTM)
     , SomeException
     , fromException
     , throwIO
@@ -22,6 +24,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask, runReaderT)
 import Data.Functor.Contravariant (contramap)
 import Data.IORef
+import System.Mem (performMajorGC)
 import System.Timeout
 import Test.Hspec
 
@@ -75,6 +78,33 @@ main = hspec do
         putMVar release ()
         within "large after-effect set" (takeMVar finished) `shouldReturn` ()
         readIORef effectCount `shouldReturn` 10000
+
+      it "is lifecycle-checked by default, with an unchecked variant" do
+        actor <- act (pure ())
+        _ <- within "actor completion" (awaitStopped actor)
+        atomically (addAfterEffect actor (const (pure ())))
+          `shouldThrow` isActorDead
+        atomically (addAfterEffectUnchecked actor (const (pure ())))
+          `shouldReturn` ()
+
+      it "reports effect failures to the configured handler" do
+        release <- newEmptyMVar
+        failures <- newIORef []
+        finished <- newEmptyMVar
+        actor <- actWith defaultActorConfig
+          { onEffectFailure = \exception ->
+              atomicModifyIORef' failures (\seen -> (exception : seen, ()))
+          }
+          (liftIO (takeMVar release))
+        atomically do
+          addAfterEffect actor (const (throwIO Underflow))
+          addAfterEffect actor (const (throwIO ThreadKilled))
+          addAfterEffect actor (const (putMVar finished ()))
+        putMVar release ()
+        within "effects after failures" (takeMVar finished) `shouldReturn` ()
+        _ <- within "effect completion" (atomically (awaitEffects actor))
+        seen <- reverse <$> readIORef failures
+        map isUnderflowException seen `shouldBe` [True, False]
 
       it "offers atomic checked and non-throwing registration" do
         release <- newEmptyMVar
@@ -159,9 +189,16 @@ main = hspec do
           status -> expectationFailure ("expected Completed, got " <> show status)
         atomically (addAfterEffectChecked actor (const (pure ())))
           `shouldThrow` isActorDead
+        timeout 100000 (atomically (awaitEffects actor)) >>= \case
+          Nothing -> pure ()
+          Just status -> expectationFailure
+            ("awaitEffects returned while an effect was blocked: " <> show status)
         putMVar releaseEffect ()
         within "remaining after-effects" (takeMVar effectsDrained)
           `shouldReturn` ()
+        within "awaitEffects" (atomically (awaitEffects actor)) >>= \case
+          Completed -> pure ()
+          status -> expectationFailure ("expected Completed, got " <> show status)
 
     describe "sending" do
       it "sends while alive and rejects normal sends after completion" do
@@ -249,6 +286,28 @@ main = hspec do
             ("expected ActorStopped, got " <> show sendResult)
         atomically (send actor "second") `shouldThrow` isActorDead
 
+      it "delivers messages from many senders exactly once and in order" do
+        let senders = 8 :: Int
+            perSender = 500 :: Int
+        received <- newIORef []
+        drained <- newEmptyMVar
+        actor <- actBounded 4 do
+          replicateM_ (senders * perSender) $ receive \message ->
+            liftIO (atomicModifyIORef' received (\messages -> (message : messages, ())))
+          liftIO (putMVar drained ())
+        finished <- newEmptyMVar
+        forM_ [1 .. senders] \sender -> forkIO do
+          forM_ [1 .. perSender] \i -> atomically (send actor (sender, i))
+          putMVar finished ()
+        replicateM_ senders (within "sender completion" (takeMVar finished))
+        within "bounded fan-in drain" (takeMVar drained) `shouldReturn` ()
+        messages <- reverse <$> readIORef received
+        forM_ [1 .. senders] \sender ->
+          [i | (sender', i) <- messages, sender' == sender]
+            `shouldBe` [1 .. perSender]
+        _ <- within "fan-in actor completion" (awaitStopped actor)
+        pure ()
+
       it "wakes a blocked normal sender when the actor stops" do
         blocker <- newEmptyMVar
         actor <- actBounded 1 (liftIO (takeMVar blocker))
@@ -264,6 +323,28 @@ main = hspec do
         within "blocked sender wakeup" (takeMVar sendResult) >>= \case
           Left _ -> pure ()
           Right () -> expectationFailure "send unexpectedly committed"
+
+    describe "undelivered messages" do
+      it "hands queued messages to the configured handler in order" do
+        blocker <- newEmptyMVar
+        undelivered <- newEmptyMVar
+        actor <- actWith defaultActorConfig
+          { mailboxCapacity = Just 8
+          , onUndelivered = putMVar undelivered
+          }
+          (liftIO (takeMVar blocker))
+        atomically (forM_ [1 .. 3 :: Int] (send actor))
+        murder actor
+        within "undelivered messages" (takeMVar undelivered)
+          `shouldReturn` [1, 2, 3]
+
+      it "does not call the handler when nothing was queued" do
+        called <- newIORef False
+        actor <- actWith defaultActorConfig
+          { onUndelivered = \(_ :: [Int]) -> writeIORef called True }
+          (pure ())
+        _ <- within "empty-mailbox completion" (atomically (awaitEffects actor))
+        readIORef called `shouldReturn` False
 
     describe "receive" do
       it "can receive messages" do
@@ -293,6 +374,11 @@ main = hspec do
           `shouldReturn` True
 
     describe "murder" do
+      it "does nothing once the actor has stopped" do
+        actor <- act (pure ())
+        _ <- within "actor completion" (awaitStopped actor)
+        within "murder of a stopped actor" (murder actor) `shouldReturn` ()
+
       it "kills actors" do
         blocker <- newEmptyMVar :: IO (MVar ())
         result <- newEmptyMVar
@@ -480,11 +566,30 @@ main = hspec do
           Completed -> pure ()
           status -> expectationFailure ("expected Completed, got " <> show status)
 
+    describe "garbage collection" do
+      it "stops a receiver whose handle has been dropped" do
+        stopped <- newEmptyMVar
+        do
+          actor <- act (receive (\() -> pure ()))
+          atomically (addAfterEffect actor (putMVar stopped))
+        let collect attempts = do
+              performMajorGC
+              timeout 200000 (takeMVar stopped) >>= \case
+                Just completion -> pure (Just completion)
+                Nothing
+                  | attempts > (1 :: Int) -> collect (attempts - 1)
+                  | otherwise -> pure Nothing
+        collect 25 >>= \case
+          Just (Just exception)
+            | Just BlockedIndefinitelyOnSTM <- fromException exception -> pure ()
+          outcome -> expectationFailure
+            ("expected BlockedIndefinitelyOnSTM, got " <> show outcome)
+
     describe "withLivenessCheck" do
       it "doesn't let you add after-effects to dead actors" do
         actor <- act (pure ())
         _ <- within "target completion" (awaitStopped actor)
-        atomically (withLivenessCheck addAfterEffect actor (const (pure ())))
+        atomically (withLivenessCheck addAfterEffectUnchecked actor (const (pure ())))
           `shouldThrow` isActorDead
 
 within :: String -> IO a -> IO a
